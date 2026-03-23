@@ -61,9 +61,9 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
   │ Bambu Lab   │◄──────────────────►│   Node.js    │
   │ Printers    │    port 8883       │   Server     │
   │             │                    │              │
-  │  (tinie)    │◄── Camera TLS ────►│  - MQTT sub  │
-  │  (trixie)   │    port 6000       │  - Camera    │
-  └─────────────┘                    │    proxy     │
+  │             │◄── TUTK (P2P) ────►│  - MQTT sub  │
+  │             │  via bambu_source  │  - Camera    │
+  └─────────────┘                    │    stream    │
                                      └──────┬───────┘
                                             │ WebSocket
                                             │ port 3001
@@ -79,7 +79,7 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
 **Server** (`server/index.js`):
 - Connects to each printer via MQTT over TLS
 - Subscribes to telemetry reports (temps, progress, AMS, state)
-- Proxies camera feeds (TLS port 6000 → JPEG frame parsing → base64 over WS)
+- Streams camera feeds via BambuStudio's `bambu_source` → `ffmpeg` → MJPEG frames over WebSocket
 - Broadcasts everything to the frontend via WebSocket
 
 **Frontend** (`src/`):
@@ -94,10 +94,8 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
 # Install dependencies
 npm install
 
-# Configure your printer access codes
-cp server/.env.example server/.env
-# Edit server/.env with your printer access codes
-# (Settings > Wi-Fi > Access Code on the printer LCD)
+# Configure your printers (see below)
+cp server/printers.example.json server/printers.json
 
 # Run everything
 npm run dev
@@ -108,26 +106,56 @@ npm run dev
    _/   \_
 ```
 
-## Environment Variables
+## Printer Config
 
-| Variable | Description |
-|----------|-------------|
-| `TINIE_ACCESS_CODE` | Access code for the printer named tinie |
-| `TRIXIE_ACCESS_CODE` | Access code for the printer named trixie |
+Edit `server/printers.json`. It's an array — add one entry per printer:
 
-Get these from each printer's touchscreen: **Settings > Wi-Fi > Access Code**
+```json
+[
+  {
+    "id": "printer1",
+    "name": "My Printer",
+    "ip": "192.168.1.100",
+    "serial": "XXXXXXXXXXXX",
+    "model": "X1C",
+    "accessCode": "xxxxxxxx"
+  }
+]
+```
 
-## Adding More Printers
+| Field | Where to find it |
+|---|---|
+| `ip` | Router device list, or printer touchscreen **Settings > Wi-Fi** |
+| `serial` | Printer touchscreen **Settings > Device** |
+| `model` | Whatever you want — shown on the card (X1C, P1S, A1, etc.) |
+| `accessCode` | Printer touchscreen **Settings > Wi-Fi > Access Code** |
 
-Edit the `PRINTERS` array in `server/index.js`. Each printer needs:
-- `id` — unique identifier
-- `name` — display name
-- `ip` — local IP address
-- `serial` — printer serial number (on the label, or in the printer's network settings)
-- `model` — model identifier
-- `accessCode` — LAN access code
+`id` is just an internal key. Use anything unique with no spaces.
 
 The dashboard auto-scales. Add 2 printers or 200. The grid will figure it out.
+
+## Camera Feeds
+
+Camera streaming uses BambuStudio's bundled `bambu_source` tool, so BambuStudio must be installed.
+
+To register a printer's camera the first time:
+
+1. Open BambuStudio and connect to the printer's live camera view
+2. Start the dashboard — the TUTK URL is now cached and the feed appears
+
+You only need to do this once per printer. The URL is saved to `server/tutk_urls.json` for future runs.
+
+**macOS** — BambuStudio stores camera tools at:
+```
+~/Library/Application Support/BambuStudio/cameratools/
+```
+
+**Linux** — BambuStudio stores camera tools at:
+```
+~/.config/BambuStudio/cameratools/
+```
+
+The server detects your OS automatically. If BambuStudio isn't installed, MQTT status data still works fine — you just won't get camera feeds.
 
 ```
   printer: *exists*
