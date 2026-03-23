@@ -60,7 +60,7 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
 ## Architecture
 
 ```
-  ┌─────────────┐     MQTT/TLS      ┌──────────────┐
+  ┌─────────────┐     MQTT/TLS       ┌──────────────┐
   │ Bambu Lab   │◄──────────────────►│   Node.js    │
   │ Printers    │    port 8883       │   Server     │
   │             │                    │              │
