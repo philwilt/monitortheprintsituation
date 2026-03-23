@@ -224,7 +224,7 @@ You'll have to run it yourself. Trust the process.
 
 ## License
 
-Do whatever you want with it. Monitor responsibly.
+[GNU Affero General Public License v3.0](LICENSE) — open source, but any commercial product built on this must also be AGPL. Monitor responsibly.
 
 ---
 
