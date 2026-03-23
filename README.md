@@ -43,6 +43,9 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
     └─────────────────────────────────────────┘
 ```
 
+<img width="1500" height="863" alt="Screenshot 2026-03-22 at 6 17 47 PM" src="https://github.com/user-attachments/assets/9eaea630-e833-4551-80fe-ec1aa1bbbd2c" />
+
+
 ## Features
 
 - **Real-time MQTT** — connects directly to your printers' local MQTT brokers. No cloud. No Bambu accounts. Just raw, unfiltered printer telemetry.
