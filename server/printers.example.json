@@ -1,0 +1,18 @@
+[
+  {
+    "id": "printer1",
+    "name": "My Printer",
+    "ip": "192.168.1.100",
+    "serial": "XXXXXXXXXXXX",
+    "model": "X1C",
+    "accessCode": "xxxxxxxx"
+  },
+  {
+    "id": "printer2",
+    "name": "Second Printer",
+    "ip": "192.168.1.101",
+    "serial": "YYYYYYYYYYYY",
+    "model": "P1S",
+    "accessCode": "yyyyyyyy"
+  }
+]

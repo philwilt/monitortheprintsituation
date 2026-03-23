@@ -21,6 +21,12 @@ lerna-debug.log*
 server/.env
 *.local
 
+# Printer config (copy printers.example.json → printers.json and fill in your details)
+server/printers.json
+
+# TUTK URL cache — auto-generated, contains auth tokens
+server/tutk_urls.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

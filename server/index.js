@@ -3,40 +3,35 @@ import { WebSocketServer } from "ws";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
 // ---- Paths ----
-const BAMBU_APP_SUPPORT = path.join(
-  process.env.HOME,
-  "Library/Application Support/BambuStudio"
-);
+const HOME = process.env.HOME || os.homedir();
+const IS_MAC = process.platform === "darwin";
+
+const BAMBU_APP_SUPPORT = IS_MAC
+  ? path.join(HOME, "Library/Application Support/BambuStudio")
+  : path.join(HOME, ".config/BambuStudio");
+
 const BAMBU_SOURCE = path.join(BAMBU_APP_SUPPORT, "cameratools/bambu_source");
 const FFMPEG = path.join(BAMBU_APP_SUPPORT, "cameratools/ffmpeg");
 const PLUGINS_DIR = path.join(BAMBU_APP_SUPPORT, "plugins");
 const URL_TXT = path.join(BAMBU_APP_SUPPORT, "cameratools/url.txt");
-const TUTK_URLS_FILE = path.join(
-  process.cwd(),
-  "server/tutk_urls.json"
-);
+const TUTK_URLS_FILE = path.join(process.cwd(), "server/tutk_urls.json");
+const PRINTERS_FILE = path.join(process.cwd(), "server/printers.json");
 
 // ---- Printer config ----
-const PRINTERS = [
-  {
-    id: "tinie",
-    name: "tinie",
-    ip: "192.168.1.100",
-    serial: "PRINTER1SERIAL",
-    model: "N7",
-    accessCode: process.env.TINIE_ACCESS_CODE || "XXXXXXXX",
-  },
-  {
-    id: "trixie",
-    name: "trixie",
-    ip: "192.168.1.101",
-    serial: "PRINTER2SERIAL",
-    model: "O1C2",
-    accessCode: process.env.TRIXIE_ACCESS_CODE || "YYYYYYYY",
-  },
-];
+let PRINTERS;
+try {
+  PRINTERS = JSON.parse(fs.readFileSync(PRINTERS_FILE, "utf8"));
+  console.log(`Loaded ${PRINTERS.length} printer(s):`, PRINTERS.map((p) => p.name).join(", "));
+} catch {
+  console.error(
+    "ERROR: server/printers.json not found.\n" +
+    "Copy server/printers.example.json → server/printers.json and fill in your printer details."
+  );
+  process.exit(1);
+}
 
 // ---- TUTK URL cache (serial → url) ----
 let tutkUrls = {};
@@ -192,8 +187,9 @@ function startCameraStream(printerId) {
 
   console.log(`Starting camera stream for ${printer.name}...`);
 
+  const libPathVar = IS_MAC ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
   const bambuProc = spawn(BAMBU_SOURCE, [tutkUrl], {
-    env: { ...process.env, DYLD_LIBRARY_PATH: PLUGINS_DIR },
+    env: { ...process.env, [libPathVar]: PLUGINS_DIR },
   });
 
   const ffmpegProc = spawn(
