@@ -47,6 +47,13 @@ export interface PrinterData {
     }>;
     tray_now?: string;
   };
+  vir_slot?: Array<{
+    id: string;
+    tray_color: string;
+    tray_type: string;
+    tray_sub_brands: string;
+    cols?: string[];
+  }>;
   xcam?: {
     first_layer_inspector?: boolean;
     spaghetti_detector?: boolean;

@@ -105,18 +105,30 @@ function getActiveFilament(
   printer: PrinterInfo
 ): { color: string; type: string } | null {
   const d = printer.data;
-  if (!d?.ams?.ams || d.ams.tray_now == null) return null;
-  for (const unit of d.ams.ams) {
-    if (!unit.tray) continue;
-    for (const tray of unit.tray) {
-      if (tray.id === d.ams.tray_now) {
-        return {
-          color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
-          type: tray.tray_type || "Unknown",
-        };
+  if (!d) return null;
+
+  if (d.ams?.ams && d.ams.ams.length > 0 && d.ams.tray_now != null) {
+    for (const unit of d.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (tray.id === d.ams.tray_now) {
+          return {
+            color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
+            type: tray.tray_type || "Unknown",
+          };
+        }
       }
     }
   }
+
+  if (d.vir_slot && d.vir_slot.length > 0) {
+    const slot = d.vir_slot[0];
+    return {
+      color: `#${slot.tray_color?.slice(0, 6) || "888"}`,
+      type: slot.tray_type || "Unknown",
+    };
+  }
+
   return null;
 }
 
@@ -152,8 +164,10 @@ function detectAnomaly(printer: PrinterInfo): string | null {
 export function PrinterCard({ printer, cameraFrame }: Props) {
   const d = printer.data;
   const cardState = getCardState(printer);
-  const anomaly = printer.status === "connected" ? detectAnomaly(printer) : null;
-  const activeFilament = printer.status === "connected" ? getActiveFilament(printer) : null;
+  const anomaly =
+    printer.status === "connected" ? detectAnomaly(printer) : null;
+  const activeFilament =
+    printer.status === "connected" ? getActiveFilament(printer) : null;
 
   const cardClass = [
     "printer-card",
@@ -163,6 +177,8 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
   ]
     .filter(Boolean)
     .join(" ");
+
+  const isConnected = printer.status === "connected" && d;
 
   return (
     <div className={cardClass}>
@@ -183,132 +199,154 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
         </div>
       </div>
 
-      {/* Situation line */}
-      <div className="situation-line">
-        <span className="situation-icon">&#x25C6;</span>
-        {situationLine(cardState, printer)}
-      </div>
-
-      {/* Anomaly */}
-      {anomaly && (
-        <div className="anomaly-indicator">
-          <span className="anomaly-dot" />
-          {anomaly}
-        </div>
-      )}
-
-      {/* Offline state */}
-      {cardState === "offline" && (
-        <div className="card-offline">
-          <p className="card-offline-message">
-            {printer.status === "no_access_code"
-              ? "Access code not configured"
-              : printer.error || "Connection lost"}
-          </p>
-        </div>
-      )}
-
-      {/* Connected content */}
-      {printer.status === "connected" && d && (
-        <>
-          {/* Task info + active filament */}
-          {(d.subtask_name || activeFilament) && (
-            <div className="task-row">
-              <span className="task-name">
-                {d.subtask_name || "No active task"}
-              </span>
-              <div className="task-row-right">
-                {activeFilament && (
-                  <span className="active-filament">
-                    <span
-                      className="filament-swatch"
-                      style={{ background: activeFilament.color }}
-                    />
-                    <span className="filament-type">
-                      {activeFilament.type}
-                    </span>
-                  </span>
-                )}
-                {d.gcode_state === "RUNNING" && d.mc_remaining_time != null && (
-                  <span className="task-time">
-                    {formatTime(d.mc_remaining_time)}
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Progress */}
-          {d.gcode_state === "RUNNING" && (
-            <div className="progress-section">
-              <div className="progress-bar-track">
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: `${d.mc_percent || 0}%` }}
-                />
-              </div>
-              <div className="progress-meta">
-                <span className="progress-pct">
-                  {d.mc_percent || 0}
-                  <span className="progress-pct-unit">%</span>
-                </span>
-                <div className="progress-detail">
-                  <span className="progress-remaining">
-                    {formatTime(d.mc_remaining_time)}
-                  </span>
-                  {d.layer_num != null && d.total_layer_num != null && (
-                    <div className="progress-layers">
-                      layer {d.layer_num} / {d.total_layer_num}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Temperatures */}
-          <div className="temps-row">
-            <TempCell
-              label="Nozzle"
-              current={d.nozzle_temper}
-              target={d.nozzle_target_temper}
-            />
-            <TempCell
-              label="Bed"
-              current={d.bed_temper}
-              target={d.bed_target_temper}
-            />
-            {d.chamber_temper != null && (
-              <TempCell label="Chamber" current={d.chamber_temper} />
-            )}
+      {/* Two-column body */}
+      <div className="card-columns">
+        {/* Left: main content */}
+        <div className="card-main">
+          {/* Situation line */}
+          <div className="situation-line">
+            <span className="situation-icon">&#x25C6;</span>
+            {situationLine(cardState, printer)}
           </div>
 
-          {/* Expandable details */}
-          <div className="card-details">
-            <div className="details-row">
-              <div className="detail-cell">
-                <span className="detail-label">Speed</span>
-                <span className="detail-value">{speedLabel(d.spd_lvl)}</span>
+          {/* Anomaly */}
+          {anomaly && (
+            <div className="anomaly-indicator">
+              <span className="anomaly-dot" />
+              {anomaly}
+            </div>
+          )}
+
+          {/* Offline state */}
+          {cardState === "offline" && (
+            <div className="card-offline">
+              <p className="card-offline-message">
+                {printer.status === "no_access_code"
+                  ? "Access code not configured"
+                  : printer.error || "Connection lost"}
+              </p>
+            </div>
+          )}
+
+          {isConnected && (
+            <>
+              {/* Task info */}
+              {d.subtask_name && (
+                <div className="task-row">
+                  <span className="task-name">{d.subtask_name}</span>
+                  {d.gcode_state === "RUNNING" &&
+                    d.mc_remaining_time != null && (
+                      <span className="task-time">
+                        {formatTime(d.mc_remaining_time)} remaining
+                      </span>
+                    )}
+                </div>
+              )}
+
+              {/* Progress */}
+              {d.gcode_state === "RUNNING" && (
+                <div className="progress-section">
+                  <div className="progress-bar-track">
+                    <div
+                      className="progress-bar-fill"
+                      style={{ width: `${d.mc_percent || 0}%` }}
+                    />
+                  </div>
+                  <div className="progress-meta">
+                    <span className="progress-pct">
+                      {d.mc_percent || 0}
+                      <span className="progress-pct-unit">%</span>
+                    </span>
+                    <div className="progress-detail">
+                      <span className="progress-remaining">
+                        {formatTime(d.mc_remaining_time)}
+                      </span>
+                      {d.layer_num != null && d.total_layer_num != null && (
+                        <div className="progress-layers">
+                          layer {d.layer_num} / {d.total_layer_num}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Temperatures */}
+              <div className="temps-row">
+                <TempCell
+                  label="Nozzle"
+                  current={d.nozzle_temper}
+                  target={d.nozzle_target_temper}
+                />
+                <TempCell
+                  label="Bed"
+                  current={d.bed_temper}
+                  target={d.bed_target_temper}
+                />
+                {d.chamber_temper != null && (
+                  <TempCell label="Chamber" current={d.chamber_temper} />
+                )}
               </div>
-              <div className="detail-cell">
-                <span className="detail-label">Part Fan</span>
-                <span className="detail-value">
-                  {d.cooling_fan_speed || "--"}%
-                </span>
+            </>
+          )}
+
+          {/* Camera */}
+          <div className="camera-section">
+            {cameraFrame ? (
+              <>
+                <img src={cameraFrame} alt={`${printer.name} feed`} />
+                <span className="camera-overlay">{printer.name} — live</span>
+              </>
+            ) : (
+              <div className="camera-placeholder">no feed</div>
+            )}
+          </div>
+        </div>
+
+        {/* Right sidebar: filament, fans, AMS — always visible */}
+        {isConnected && (
+          <div className="card-sidebar">
+            {/* Active filament */}
+            {activeFilament && (
+              <div className="sidebar-block">
+                <div className="sidebar-label">Filament</div>
+                <div className="sidebar-filament">
+                  <span
+                    className="sidebar-filament-swatch"
+                    style={{ background: activeFilament.color }}
+                  />
+                  <span className="sidebar-filament-type">
+                    {activeFilament.type}
+                  </span>
+                </div>
               </div>
-              <div className="detail-cell">
-                <span className="detail-label">Aux Fan</span>
-                <span className="detail-value">
-                  {d.big_fan1_speed || "--"}%
-                </span>
+            )}
+
+            {/* Fans */}
+            <div className="sidebar-block">
+              <div className="sidebar-label">Speed</div>
+              <div className="sidebar-value">{speedLabel(d.spd_lvl)}</div>
+            </div>
+
+            <div className="sidebar-block">
+              <div className="sidebar-label">Part Fan</div>
+              <div className="sidebar-value">
+                {d.cooling_fan_speed || "--"}%
               </div>
             </div>
 
-            {/* AMS */}
+            <div className="sidebar-block">
+              <div className="sidebar-label">Aux Fan</div>
+              <div className="sidebar-value">
+                {d.big_fan1_speed || "--"}%
+              </div>
+            </div>
+
+            {/* AMS (full) */}
             {d.ams?.ams && d.ams.ams.length > 0 && (
-              <div className="ams-section">
-                <div className="ams-header">AMS</div>
-                <div className="ams-trays">
+              <div className="sidebar-block sidebar-ams">
+                <div className="sidebar-label">AMS</div>
+                <div className="sidebar-trays">
                   {d.ams.ams.flatMap(
                     (unit) =>
                       unit.tray?.map((tray) => {
@@ -317,18 +355,20 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                         return (
                           <div
                             key={`${unit.id}-${tray.id}`}
-                            className={`ams-tray${isActive ? " active" : ""}`}
-                            style={{
-                              borderColor: isActive
-                                ? color
-                                : "var(--border-subtle)",
-                            }}
+                            className={`sidebar-tray${isActive ? " active" : ""}`}
                           >
-                            <div
+                            <span
                               className="tray-swatch"
-                              style={{ background: color }}
+                              style={{
+                                background: color,
+                                boxShadow: isActive
+                                  ? `0 0 6px ${color}40`
+                                  : "none",
+                              }}
                             />
-                            <span>{tray.tray_type}</span>
+                            <span className="sidebar-tray-type">
+                              {tray.tray_type}
+                            </span>
                           </div>
                         );
                       }) || []
@@ -336,19 +376,33 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                 </div>
               </div>
             )}
-          </div>
-        </>
-      )}
 
-      {/* Camera */}
-      <div className="camera-section">
-        {cameraFrame ? (
-          <>
-            <img src={cameraFrame} alt={`${printer.name} feed`} />
-            <span className="camera-overlay">{printer.name} — live</span>
-          </>
-        ) : (
-          <div className="camera-placeholder">no feed</div>
+            {/* AMS Lite / external spool */}
+            {d.vir_slot && d.vir_slot.length > 0 && (
+              <div className="sidebar-block sidebar-ams">
+                <div className="sidebar-label">AMS Lite</div>
+                <div className="sidebar-trays">
+                  {d.vir_slot.map((slot) => {
+                    const color = `#${slot.tray_color?.slice(0, 6) || "444"}`;
+                    return (
+                      <div key={slot.id} className="sidebar-tray active">
+                        <span
+                          className="tray-swatch"
+                          style={{
+                            background: color,
+                            boxShadow: `0 0 6px ${color}40`,
+                          }}
+                        />
+                        <span className="sidebar-tray-type">
+                          {slot.tray_type}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

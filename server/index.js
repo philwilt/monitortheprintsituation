@@ -1,7 +1,24 @@
 import mqtt from "mqtt";
 import { WebSocketServer } from "ws";
-import tls from "tls";
+import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 
+// ---- Paths ----
+const BAMBU_APP_SUPPORT = path.join(
+  process.env.HOME,
+  "Library/Application Support/BambuStudio"
+);
+const BAMBU_SOURCE = path.join(BAMBU_APP_SUPPORT, "cameratools/bambu_source");
+const FFMPEG = path.join(BAMBU_APP_SUPPORT, "cameratools/ffmpeg");
+const PLUGINS_DIR = path.join(BAMBU_APP_SUPPORT, "plugins");
+const URL_TXT = path.join(BAMBU_APP_SUPPORT, "cameratools/url.txt");
+const TUTK_URLS_FILE = path.join(
+  process.cwd(),
+  "server/tutk_urls.json"
+);
+
+// ---- Printer config ----
 const PRINTERS = [
   {
     id: "tinie",
@@ -21,10 +38,45 @@ const PRINTERS = [
   },
 ];
 
-// Store latest state for each printer
-const printerStates = new Map();
+// ---- TUTK URL cache (serial → url) ----
+let tutkUrls = {};
+try {
+  tutkUrls = JSON.parse(fs.readFileSync(TUTK_URLS_FILE, "utf8"));
+  console.log("Loaded TUTK URLs:", Object.keys(tutkUrls));
+} catch {
+  // No cache yet
+}
 
-// WebSocket server for frontend
+function saveTutkUrls() {
+  fs.writeFileSync(TUTK_URLS_FILE, JSON.stringify(tutkUrls, null, 2));
+}
+
+// Watch BambuStudio's url.txt for new TUTK credentials
+fs.watchFile(URL_TXT, { interval: 1000 }, () => {
+  try {
+    const url = fs.readFileSync(URL_TXT, "utf8").trim();
+    const match = url.match(/device=([A-Z0-9]+)/);
+    if (!match) return;
+    const serial = match[1];
+    const printer = PRINTERS.find((p) => p.serial === serial);
+    if (!printer) return;
+    if (tutkUrls[serial] !== url) {
+      tutkUrls[serial] = url;
+      saveTutkUrls();
+      console.log(`Updated TUTK URL for ${printer.name} (${serial})`);
+      // Restart that printer's camera stream
+      restartCameraStream(printer.id);
+    }
+  } catch {
+    // ignore
+  }
+});
+
+// ---- State ----
+const printerStates = new Map();
+const cameraProcesses = new Map(); // printerId → {proc, ws}
+
+// ---- WebSocket server ----
 const wss = new WebSocketServer({ port: 3001 });
 
 function broadcast(data) {
@@ -36,29 +88,18 @@ function broadcast(data) {
   }
 }
 
-// Connect to each printer's MQTT broker
+// ---- MQTT ----
 for (const printer of PRINTERS) {
   if (!printer.accessCode) {
-    console.warn(
-      `No access code for ${printer.name} — set ${printer.id.toUpperCase()}_ACCESS_CODE env var`
-    );
     printerStates.set(printer.id, {
       ...printer,
       status: "no_access_code",
       data: null,
     });
-    broadcast({
-      type: "printer_status",
-      printer: printer.id,
-      state: printerStates.get(printer.id),
-    });
     continue;
   }
 
-  const mqttUrl = `mqtts://${printer.ip}:8883`;
-  console.log(`Connecting MQTT to ${printer.name} at ${mqttUrl}...`);
-
-  const client = mqtt.connect(mqttUrl, {
+  const client = mqtt.connect(`mqtts://${printer.ip}:8883`, {
     username: "bblp",
     password: printer.accessCode,
     rejectUnauthorized: false,
@@ -68,24 +109,14 @@ for (const printer of PRINTERS) {
   });
 
   client.on("connect", () => {
-    console.log(`MQTT connected to ${printer.name}`);
+    console.log(`MQTT connected: ${printer.name}`);
     const topic = `device/${printer.serial}/report`;
-    client.subscribe(topic, (err) => {
-      if (err) {
-        console.error(`Subscribe error for ${printer.name}:`, err);
-        return;
-      }
-      console.log(`Subscribed to ${topic}`);
-
-      // Request full status push
+    client.subscribe(topic, () => {
       client.publish(
         `device/${printer.serial}/request`,
-        JSON.stringify({
-          pushing: { sequence_id: "0", command: "pushall" },
-        })
+        JSON.stringify({ pushing: { sequence_id: "0", command: "pushall" } })
       );
     });
-
     printerStates.set(printer.id, {
       ...printer,
       accessCode: undefined,
@@ -102,6 +133,7 @@ for (const printer of PRINTERS) {
   client.on("message", (_topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
+      if (!payload.print) return;
       const existing = printerStates.get(printer.id) || {};
       const merged = {
         ...existing,
@@ -117,12 +149,12 @@ for (const printer of PRINTERS) {
         timestamp: Date.now(),
       });
     } catch {
-      // Non-JSON message, ignore
+      // ignore
     }
   });
 
   client.on("error", (err) => {
-    console.error(`MQTT error for ${printer.name}:`, err.message);
+    console.error(`MQTT error ${printer.name}:`, err.message);
     printerStates.set(printer.id, {
       ...printer,
       accessCode: undefined,
@@ -136,109 +168,143 @@ for (const printer of PRINTERS) {
       state: printerStates.get(printer.id),
     });
   });
-
-  client.on("close", () => {
-    console.log(`MQTT disconnected from ${printer.name}`);
-  });
 }
 
-// Camera stream proxy — connects to printer's port 6000 TLS stream
-// and forwards JPEG frames over WebSocket
-function startCameraProxy(printer, ws) {
-  if (!printer.accessCode) return null;
+// ---- Camera via bambu_source + ffmpeg ----
+function startCameraStream(printerId) {
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return;
 
-  const socket = tls.connect(
-    6000,
-    printer.ip,
-    { rejectUnauthorized: false },
-    () => {
-      console.log(`Camera TLS connected to ${printer.name}`);
-      // Send auth: username\0password\0
-      const authBuf = Buffer.from(`bblp\0${printer.accessCode}\0`);
-      socket.write(authBuf);
-    }
+  const tutkUrl = tutkUrls[printer.serial];
+  if (!tutkUrl) {
+    console.log(
+      `No TUTK URL for ${printer.name} — open its camera in BambuStudio to register it`
+    );
+    return;
+  }
+
+  // Kill any existing process
+  const existing = cameraProcesses.get(printerId);
+  if (existing) {
+    existing.kill();
+    cameraProcesses.delete(printerId);
+  }
+
+  console.log(`Starting camera stream for ${printer.name}...`);
+
+  const bambuProc = spawn(BAMBU_SOURCE, [tutkUrl], {
+    env: { ...process.env, DYLD_LIBRARY_PATH: PLUGINS_DIR },
+  });
+
+  const ffmpegProc = spawn(
+    FFMPEG,
+    [
+      "-fflags", "nobuffer",
+      "-flags", "low_delay",
+      "-analyzeduration", "10",
+      "-probesize", "3200",
+      "-f", "h264",
+      "-i", "pipe:",
+      "-f", "mjpeg",
+      "-q:v", "4",
+      "-vf", "fps=5",
+      "pipe:1",
+    ],
+    { env: process.env }
   );
 
-  let buffer = Buffer.alloc(0);
+  bambuProc.stdout.pipe(ffmpegProc.stdin);
+  bambuProc.stderr.on("data", (d) => {
+    const msg = d.toString().trim();
+    if (msg) console.log(`[${printer.name} cam] ${msg}`);
+  });
+  ffmpegProc.stderr.on("data", () => {}); // suppress ffmpeg noise
 
-  socket.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
+  // Parse MJPEG frames from ffmpeg stdout
+  let buf = Buffer.alloc(0);
+  ffmpegProc.stdout.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
 
-    // Parse frames — each frame has a 16-byte header:
-    // bytes 0-3: magic (0x40, 0x49, 0x50, 0x43 = "@IPC")
-    // bytes 4-7: reserved
-    // bytes 8-11: data length (little-endian uint32)
-    // bytes 12-15: reserved
-    while (buffer.length >= 16) {
-      // Check for @IPC magic
-      if (
-        buffer[0] !== 0x40 ||
-        buffer[1] !== 0x49 ||
-        buffer[2] !== 0x50 ||
-        buffer[3] !== 0x43
-      ) {
-        // Try to find next magic marker
-        const idx = buffer.indexOf(Buffer.from([0x40, 0x49, 0x50, 0x43]), 1);
-        if (idx === -1) {
-          buffer = Buffer.alloc(0);
-          break;
-        }
-        buffer = buffer.subarray(idx);
-        continue;
+    while (true) {
+      // Find JPEG start marker (FF D8 FF)
+      const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
+      if (start === -1) {
+        buf = Buffer.alloc(0);
+        break;
       }
+      if (start > 0) buf = buf.subarray(start);
 
-      const dataLen = buffer.readUInt32LE(8);
-      const totalLen = 16 + dataLen;
+      // Find JPEG end marker (FF D9)
+      const end = buf.indexOf(Buffer.from([0xff, 0xd9]), 2);
+      if (end === -1) break;
 
-      if (buffer.length < totalLen) break;
+      const frame = buf.subarray(0, end + 2);
+      buf = buf.subarray(end + 2);
 
-      const jpegData = buffer.subarray(16, totalLen);
-      buffer = buffer.subarray(totalLen);
+      const msg = JSON.stringify({
+        type: "camera_frame",
+        printer: printerId,
+        frame: frame.toString("base64"),
+      });
 
-      if (ws.readyState === 1) {
-        ws.send(
-          JSON.stringify({
-            type: "camera_frame",
-            printer: printer.id,
-            frame: jpegData.toString("base64"),
-          })
-        );
+      for (const client of wss.clients) {
+        if (client.readyState === 1) client.send(msg);
       }
     }
   });
 
-  socket.on("error", (err) => {
-    console.error(`Camera error for ${printer.name}:`, err.message);
+  bambuProc.on("exit", (code) => {
+    console.log(`${printer.name} bambu_source exited (${code}), restarting...`);
+    cameraProcesses.delete(printerId);
+    setTimeout(() => startCameraStream(printerId), 5000);
   });
 
-  return socket;
+  ffmpegProc.on("exit", (code) => {
+    console.log(`${printer.name} ffmpeg exited (${code})`);
+    bambuProc.kill();
+  });
+
+  cameraProcesses.set(printerId, { kill: () => { bambuProc.kill(); ffmpegProc.kill(); } });
 }
 
-// Handle WebSocket connections from frontend
-wss.on("connection", (ws) => {
-  console.log("Frontend client connected");
+function restartCameraStream(printerId) {
+  const existing = cameraProcesses.get(printerId);
+  if (existing) existing.kill();
+  setTimeout(() => startCameraStream(printerId), 500);
+}
 
-  // Send current state for all printers
+// Start camera streams for all printers that have TUTK URLs
+for (const printer of PRINTERS) {
+  if (tutkUrls[printer.serial]) {
+    startCameraStream(printer.id);
+  }
+}
+
+// ---- WebSocket connection handler ----
+wss.on("connection", (ws) => {
+  console.log("Frontend connected");
   for (const [id, state] of printerStates) {
     ws.send(JSON.stringify({ type: "printer_status", printer: id, state }));
   }
 
-  // Start camera streams for connected printers
-  const cameraSockets = [];
+  // Check if any printers are missing TUTK URLs and notify
   for (const printer of PRINTERS) {
-    if (printer.accessCode) {
-      const cam = startCameraProxy(printer, ws);
-      if (cam) cameraSockets.push(cam);
+    if (!tutkUrls[printer.serial]) {
+      ws.send(JSON.stringify({
+        type: "camera_unavailable",
+        printer: printer.id,
+        reason: "Open this printer's camera in BambuStudio to enable the feed",
+      }));
     }
   }
 
-  ws.on("close", () => {
-    console.log("Frontend client disconnected");
-    for (const cam of cameraSockets) {
-      cam.destroy();
-    }
-  });
+  ws.on("close", () => console.log("Frontend disconnected"));
 });
 
-console.log("The Situation server running on ws://localhost:3001");
-console.log(`Monitoring ${PRINTERS.length} printers`);
+console.log("The Situation server — ws://localhost:3001");
+console.log(
+  `TUTK URLs cached: ${Object.keys(tutkUrls).length}/${PRINTERS.length} printers`
+);
+console.log(
+  `Missing: ${PRINTERS.filter((p) => !tutkUrls[p.serial]).map((p) => p.name).join(", ") || "none"}`
+);
