@@ -34,7 +34,7 @@ This is a mission control interface. Not a toy. Not a "fun colorful maker dashbo
     │─────────────────────────────────────────│
     │  ┌──────────┐ ┌──────────┐              │
     │  │ tinie    │ │ trixie   │              │
-    │  │ ████░░ 67%│ │ ██░░░░ 33%│              │
+    │  │ ███░░ 67%│ │ ██░░░ 33%│              │
     │  │ 210°C    │ │ 215°C    │              │
     │  │ nominal  │ │ nominal  │              │
     │  └──────────┘ └──────────┘              │
