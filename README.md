@@ -130,6 +130,7 @@ Edit `server/printers.json`. It's an array — add one entry per printer:
 | `serial` | Printer touchscreen **Settings > Device** |
 | `model` | Whatever you want — shown on the card (X1C, P1S, A1, etc.) |
 | `accessCode` | Printer touchscreen **Settings > Wi-Fi > Access Code** |
+| `cameraMode` | Optional. Set to `"rtp"` for X1-series printers that require BambuStudio Go Live |
 
 `id` is just an internal key. Use anything unique with no spaces.
 
@@ -137,7 +138,13 @@ The dashboard auto-scales. Add 2 printers or 200. The grid will figure it out.
 
 ## Camera Feeds
 
-Camera streaming uses BambuStudio's bundled `bambu_source` tool, so BambuStudio must be installed.
+BambuStudio must be installed. The server auto-detects your OS and uses BambuStudio's bundled camera tools.
+
+There are two camera modes depending on your printer model:
+
+### TUTK mode (default — P1S, A1, most models)
+
+BambuStudio writes a TUTK P2P URL to a local file when it connects to a printer's camera. The dashboard picks this up and streams independently from that point on.
 
 To register a printer's camera the first time:
 
@@ -146,17 +153,31 @@ To register a printer's camera the first time:
 
 You only need to do this once per printer. The URL is saved to `server/tutk_urls.json` for future runs.
 
-**macOS** — BambuStudio stores camera tools at:
+### RTP mode (X1-series and some newer models)
+
+Some printers don't expose a TUTK URL file. Instead, BambuStudio's **Go Live** feature publishes the stream to a local RTP socket that the dashboard can read.
+
+To use RTP mode:
+
+1. Add `"cameraMode": "rtp"` to the printer's entry in `server/printers.json`
+2. In BambuStudio, open the printer and click **Go Live** (camera icon → Start)
+3. The feed appears in the dashboard while Go Live is active
+
+The dashboard retries in the background — start Go Live any time and the feed appears within a few seconds.
+
+### BambuStudio paths
+
+**macOS:**
 ```
 ~/Library/Application Support/BambuStudio/cameratools/
 ```
 
-**Linux** — BambuStudio stores camera tools at:
+**Linux:**
 ```
 ~/.config/BambuStudio/cameratools/
 ```
 
-The server detects your OS automatically. If BambuStudio isn't installed, MQTT status data still works fine — you just won't get camera feeds.
+If BambuStudio isn't installed, MQTT status data still works — you just won't get camera feeds.
 
 ```
   printer: *exists*

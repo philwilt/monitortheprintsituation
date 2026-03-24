@@ -18,6 +18,7 @@ const BAMBU_SOURCE = path.join(BAMBU_APP_SUPPORT, "cameratools/bambu_source");
 const FFMPEG = path.join(BAMBU_APP_SUPPORT, "cameratools/ffmpeg");
 const PLUGINS_DIR = path.join(BAMBU_APP_SUPPORT, "plugins");
 const URL_TXT = path.join(BAMBU_APP_SUPPORT, "cameratools/url.txt");
+const SDP_FILE = path.join(BAMBU_APP_SUPPORT, "cameratools/ffmpeg.sdp");
 const TUTK_URLS_FILE = path.join(process.cwd(), "server/tutk_urls.json");
 const PRINTERS_FILE = path.join(process.cwd(), "server/printers.json");
 
@@ -215,7 +216,10 @@ function startCameraStream(printerId) {
     const msg = d.toString().trim();
     if (msg) console.log(`[${printer.name} cam] ${msg}`);
   });
-  ffmpegProc.stderr.on("data", () => {}); // suppress ffmpeg noise
+  ffmpegProc.stderr.on("data", (d) => {
+    const msg = d.toString().trim();
+    if (msg) console.log(`[${printer.name} ffmpeg] ${msg}`);
+  });
 
   // Parse MJPEG frames from ffmpeg stdout
   let buf = Buffer.alloc(0);
@@ -237,7 +241,6 @@ function startCameraStream(printerId) {
 
       const frame = buf.subarray(0, end + 2);
       buf = buf.subarray(end + 2);
-
       const msg = JSON.stringify({
         type: "camera_frame",
         printer: printerId,
@@ -264,7 +267,70 @@ function startCameraStream(printerId) {
   cameraProcesses.set(printerId, { kill: () => { bambuProc.kill(); ffmpegProc.kill(); } });
 }
 
+// ---- RTP camera stream (BambuStudio Go Live, X1-series) ----
+const rtpBackoff = new Map(); // printerId → delay ms
+
+function startRTPCameraStream(printerId) {
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return;
+
+  const existing = cameraProcesses.get(printerId);
+  if (existing) {
+    existing.kill();
+    cameraProcesses.delete(printerId);
+  }
+
+  console.log(`Starting RTP camera stream for ${printer.name} (requires BambuStudio Go Live)...`);
+
+  const ffmpegProc = spawn(FFMPEG, [
+    "-protocol_whitelist", "file,udp,rtp",
+    "-i", SDP_FILE,
+    "-f", "mjpeg",
+    "-q:v", "4",
+    "-vf", "fps=5",
+    "pipe:1",
+  ], { env: process.env });
+
+  ffmpegProc.stderr.on("data", () => {}); // suppress ffmpeg noise
+
+  let buf = Buffer.alloc(0);
+  let firstFrame = true;
+  ffmpegProc.stdout.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (true) {
+      const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
+      if (start === -1) { buf = Buffer.alloc(0); break; }
+      if (start > 0) buf = buf.subarray(start);
+      const end = buf.indexOf(Buffer.from([0xff, 0xd9]), 2);
+      if (end === -1) break;
+      const frame = buf.subarray(0, end + 2);
+      buf = buf.subarray(end + 2);
+      if (firstFrame) {
+        console.log(`[${printer.name}] RTP camera: first frame (${frame.length} bytes)`);
+        rtpBackoff.delete(printerId);
+        firstFrame = false;
+      }
+      const msg = JSON.stringify({ type: "camera_frame", printer: printerId, frame: frame.toString("base64") });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) client.send(msg);
+      }
+    }
+  });
+
+  ffmpegProc.on("exit", (code) => {
+    cameraProcesses.delete(printerId);
+    const delay = Math.min(rtpBackoff.get(printerId) || 5000, 60000); // cap at 1 min
+    rtpBackoff.set(printerId, delay * 2);
+    console.log(`${printer.name} RTP stream ended, retrying in ${Math.round(delay / 1000)}s (start Go Live in BambuStudio)`);
+    setTimeout(() => startRTPCameraStream(printerId), delay);
+  });
+
+  cameraProcesses.set(printerId, { kill: () => ffmpegProc.kill() });
+}
+
 // ---- TLS camera stream (port 6000, older Bambu models) ----
+const tlsBackoff = new Map(); // printerId → delay ms
+
 function startTLSCameraStream(printerId) {
   const printer = PRINTERS.find((p) => p.id === printerId);
   if (!printer) return;
@@ -278,10 +344,18 @@ function startTLSCameraStream(printerId) {
   console.log(`Starting TLS camera stream for ${printer.name}...`);
 
   const socket = tls.connect(6000, printer.ip, { rejectUnauthorized: false }, () => {
-    socket.write(Buffer.from(`bblp\0${printer.accessCode}\0`));
+    console.log(`[${printer.name}] TLS connected, sending auth...`);
+    const header = Buffer.from([0x00, 0x00, 0x00, 0x40, 0xb8, 0xce, 0x5f, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    const user = Buffer.alloc(32);
+    Buffer.from("bblp").copy(user);
+    const pass = Buffer.alloc(32);
+    // Try access code as raw binary bytes (e.g. "30cef6e7" → 0x30,0xce,0xf6,0xe7)
+    Buffer.from(printer.accessCode, "hex").copy(pass);
+    socket.write(Buffer.concat([header, user, pass]));
   });
 
   let buf = Buffer.alloc(0);
+  let framesFound = 0;
   const MAGIC = Buffer.from([0x40, 0x49, 0x50, 0x43]); // @IPC
 
   socket.on("data", (chunk) => {
@@ -299,6 +373,11 @@ function startTLSCameraStream(printerId) {
 
       const frame = buf.subarray(16, 16 + dataLen);
       buf = buf.subarray(16 + dataLen);
+      framesFound++;
+      if (framesFound === 1) {
+        console.log(`[${printer.name}] TLS camera: first frame (${frame.length} bytes)`);
+        tlsBackoff.delete(printerId); // reset backoff on success
+      }
 
       const msg = JSON.stringify({
         type: "camera_frame",
@@ -316,9 +395,11 @@ function startTLSCameraStream(printerId) {
   });
 
   socket.on("close", () => {
-    console.log(`${printer.name} TLS camera closed, restarting...`);
     cameraProcesses.delete(printerId);
-    setTimeout(() => startTLSCameraStream(printerId), 5000);
+    const delay = Math.min(tlsBackoff.get(printerId) || 5000, 300000); // cap at 5 min
+    tlsBackoff.set(printerId, delay * 2);
+    console.log(`${printer.name} TLS camera closed, retrying in ${Math.round(delay / 1000)}s`);
+    setTimeout(() => startTLSCameraStream(printerId), delay);
   });
 
   cameraProcesses.set(printerId, { kill: () => socket.destroy() });
@@ -330,9 +411,11 @@ function restartCameraStream(printerId) {
   setTimeout(() => startCameraStream(printerId), 500);
 }
 
-// Start camera streams — TUTK if available, TLS fallback
+// Start camera streams
 for (const printer of PRINTERS) {
-  if (tutkUrls[printer.serial]) {
+  if (printer.cameraMode === "rtp") {
+    startRTPCameraStream(printer.id);
+  } else if (tutkUrls[printer.serial]) {
     startCameraStream(printer.id);
   } else {
     startTLSCameraStream(printer.id);

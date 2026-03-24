@@ -13,6 +13,7 @@
     "ip": "192.168.1.101",
     "serial": "YYYYYYYYYYYY",
     "model": "P1S",
-    "accessCode": "yyyyyyyy"
+    "accessCode": "yyyyyyyy",
+    "cameraMode": "rtp"
   }
 ]
