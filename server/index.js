@@ -1,6 +1,7 @@
 import mqtt from "mqtt";
 import { WebSocketServer } from "ws";
 import { spawn } from "child_process";
+import tls from "tls";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -263,16 +264,78 @@ function startCameraStream(printerId) {
   cameraProcesses.set(printerId, { kill: () => { bambuProc.kill(); ffmpegProc.kill(); } });
 }
 
+// ---- TLS camera stream (port 6000, older Bambu models) ----
+function startTLSCameraStream(printerId) {
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return;
+
+  const existing = cameraProcesses.get(printerId);
+  if (existing) {
+    existing.kill();
+    cameraProcesses.delete(printerId);
+  }
+
+  console.log(`Starting TLS camera stream for ${printer.name}...`);
+
+  const socket = tls.connect(6000, printer.ip, { rejectUnauthorized: false }, () => {
+    socket.write(Buffer.from(`bblp\0${printer.accessCode}\0`));
+  });
+
+  let buf = Buffer.alloc(0);
+  const MAGIC = Buffer.from([0x40, 0x49, 0x50, 0x43]); // @IPC
+
+  socket.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+
+    while (buf.length >= 16) {
+      if (!buf.subarray(0, 4).equals(MAGIC)) {
+        const idx = buf.indexOf(MAGIC, 1);
+        if (idx === -1) { buf = Buffer.alloc(0); break; }
+        buf = buf.subarray(idx);
+        continue;
+      }
+      const dataLen = buf.readUInt32LE(8);
+      if (buf.length < 16 + dataLen) break;
+
+      const frame = buf.subarray(16, 16 + dataLen);
+      buf = buf.subarray(16 + dataLen);
+
+      const msg = JSON.stringify({
+        type: "camera_frame",
+        printer: printerId,
+        frame: frame.toString("base64"),
+      });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) client.send(msg);
+      }
+    }
+  });
+
+  socket.on("error", (err) => {
+    console.error(`${printer.name} TLS camera error:`, err.message);
+  });
+
+  socket.on("close", () => {
+    console.log(`${printer.name} TLS camera closed, restarting...`);
+    cameraProcesses.delete(printerId);
+    setTimeout(() => startTLSCameraStream(printerId), 5000);
+  });
+
+  cameraProcesses.set(printerId, { kill: () => socket.destroy() });
+}
+
 function restartCameraStream(printerId) {
   const existing = cameraProcesses.get(printerId);
   if (existing) existing.kill();
   setTimeout(() => startCameraStream(printerId), 500);
 }
 
-// Start camera streams for all printers that have TUTK URLs
+// Start camera streams — TUTK if available, TLS fallback
 for (const printer of PRINTERS) {
   if (tutkUrls[printer.serial]) {
     startCameraStream(printer.id);
+  } else {
+    startTLSCameraStream(printer.id);
   }
 }
 
@@ -282,18 +345,6 @@ wss.on("connection", (ws) => {
   for (const [id, state] of printerStates) {
     ws.send(JSON.stringify({ type: "printer_status", printer: id, state }));
   }
-
-  // Check if any printers are missing TUTK URLs and notify
-  for (const printer of PRINTERS) {
-    if (!tutkUrls[printer.serial]) {
-      ws.send(JSON.stringify({
-        type: "camera_unavailable",
-        printer: printer.id,
-        reason: "Open this printer's camera in BambuStudio to enable the feed",
-      }));
-    }
-  }
-
   ws.on("close", () => console.log("Frontend disconnected"));
 });
 
