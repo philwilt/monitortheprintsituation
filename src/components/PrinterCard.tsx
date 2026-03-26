@@ -204,7 +204,29 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
               onClick={() => setSidebarOpen((o) => !o)}
               title={sidebarOpen ? "Hide details" : "Show details"}
             >
-              &#x203A;
+              {!sidebarOpen && (
+                <span className="sidebar-toggle-peek">
+                  {activeFilament && (
+                    <>
+                      <span
+                        className="peek-swatch"
+                        style={{ background: activeFilament.color }}
+                      />
+                      <span className="peek-text">{activeFilament.type}</span>
+                      <span className="peek-divider">·</span>
+                    </>
+                  )}
+                  <span className="peek-text">{speedLabel(d.spd_lvl)}</span>
+                  {d.wifi_signal && (
+                    <>
+                      <span className="peek-divider">·</span>
+                      <span className="peek-text">{d.wifi_signal}</span>
+                    </>
+                  )}
+                  <span className="peek-chevron">&#x203A;</span>
+                </span>
+              )}
+              {sidebarOpen && <span>&#x203A;</span>}
             </button>
           )}
         </div>

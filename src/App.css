@@ -747,7 +747,6 @@ body {
 
 /* ---- Sidebar toggle button (in card header) ---- */
 .sidebar-toggle {
-  width: 22px;
   height: 22px;
   display: flex;
   align-items: center;
@@ -760,7 +759,7 @@ body {
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, transform 0.2s ease;
   line-height: 1;
-  padding: 0;
+  padding: 0 6px;
   flex-shrink: 0;
 }
 
@@ -772,6 +771,38 @@ body {
 .sidebar-toggle.open {
   transform: rotate(180deg);
   color: var(--text-secondary);
+}
+
+.sidebar-toggle-peek {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.62rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.peek-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.peek-text {
+  color: var(--text-muted);
+}
+
+.peek-divider {
+  color: var(--text-dim);
+}
+
+.peek-chevron {
+  font-size: 0.85rem;
+  margin-left: 3px;
+  color: var(--text-dim);
 }
 
 /* ---- Task Info ---- */
