@@ -643,6 +643,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.sidebar-target {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
 .sidebar-filament {
   display: flex;
   align-items: center;
@@ -708,6 +715,63 @@ body {
 .situation-line .situation-icon {
   font-size: 0.55rem;
   opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.situation-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.situation-temps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.situation-temp {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.situation-temp-label {
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ---- Sidebar toggle button (in card header) ---- */
+.sidebar-toggle {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.2s ease;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.sidebar-toggle.open {
+  transform: rotate(180deg);
+  color: var(--text-secondary);
 }
 
 /* ---- Task Info ---- */

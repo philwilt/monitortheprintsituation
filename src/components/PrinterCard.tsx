@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 
 interface Props {
@@ -162,6 +163,7 @@ function detectAnomaly(printer: PrinterInfo): string | null {
 }
 
 export function PrinterCard({ printer, cameraFrame }: Props) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const d = printer.data;
   const cardState = getCardState(printer);
   const anomaly =
@@ -196,6 +198,15 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
           <span className={`state-tag ${cardState}`}>
             {stateLabel(cardState)}
           </span>
+          {isConnected && (
+            <button
+              className={`sidebar-toggle${sidebarOpen ? " open" : ""}`}
+              onClick={() => setSidebarOpen((o) => !o)}
+              title={sidebarOpen ? "Hide details" : "Show details"}
+            >
+              &#x203A;
+            </button>
+          )}
         </div>
       </div>
 
@@ -206,7 +217,23 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
           {/* Situation line */}
           <div className="situation-line">
             <span className="situation-icon">&#x25C6;</span>
-            {situationLine(cardState, printer)}
+            <span className="situation-text">{situationLine(cardState, printer)}</span>
+            {isConnected && (d.nozzle_temper != null || d.bed_temper != null) && (
+              <span className="situation-temps">
+                {d.nozzle_temper != null && (
+                  <span className="situation-temp">
+                    <span className="situation-temp-label">nozzle</span>
+                    {d.nozzle_temper.toFixed(0)}°
+                  </span>
+                )}
+                {d.bed_temper != null && (
+                  <span className="situation-temp">
+                    <span className="situation-temp-label">bed</span>
+                    {d.bed_temper.toFixed(0)}°
+                  </span>
+                )}
+              </span>
+            )}
           </div>
 
           {/* Anomaly */}
@@ -238,6 +265,8 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                     d.mc_remaining_time != null && (
                       <span className="task-time">
                         {formatTime(d.mc_remaining_time)} remaining
+                        {" · "}
+                        done {new Date(Date.now() + d.mc_remaining_time * 60000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                       </span>
                     )}
                 </div>
@@ -270,23 +299,6 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                   </div>
                 </div>
               )}
-
-              {/* Temperatures */}
-              <div className="temps-row">
-                <TempCell
-                  label="Nozzle"
-                  current={d.nozzle_temper}
-                  target={d.nozzle_target_temper}
-                />
-                <TempCell
-                  label="Bed"
-                  current={d.bed_temper}
-                  target={d.bed_target_temper}
-                />
-                {d.chamber_temper != null && (
-                  <TempCell label="Chamber" current={d.chamber_temper} />
-                )}
-              </div>
             </>
           )}
 
@@ -303,9 +315,37 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
           </div>
         </div>
 
-        {/* Right sidebar: filament, fans, AMS — always visible */}
-        {isConnected && (
+        {/* Right sidebar: temps, filament, fans, AMS — collapsed by default */}
+        {isConnected && sidebarOpen && (
           <div className="card-sidebar">
+            {/* Temperatures */}
+            <div className="sidebar-block">
+              <div className="sidebar-label">Nozzle</div>
+              <div className="sidebar-value">
+                {d.nozzle_temper != null ? `${d.nozzle_temper.toFixed(0)}°C` : "--"}
+              </div>
+              {d.nozzle_target_temper != null && d.nozzle_target_temper > 0 && (
+                <div className="sidebar-target">→ {d.nozzle_target_temper}°C</div>
+              )}
+            </div>
+
+            <div className="sidebar-block">
+              <div className="sidebar-label">Bed</div>
+              <div className="sidebar-value">
+                {d.bed_temper != null ? `${d.bed_temper.toFixed(0)}°C` : "--"}
+              </div>
+              {d.bed_target_temper != null && d.bed_target_temper > 0 && (
+                <div className="sidebar-target">→ {d.bed_target_temper}°C</div>
+              )}
+            </div>
+
+            {d.chamber_temper != null && (
+              <div className="sidebar-block">
+                <div className="sidebar-label">Chamber</div>
+                <div className="sidebar-value">{d.chamber_temper.toFixed(0)}°C</div>
+              </div>
+            )}
+
             {/* Active filament */}
             {activeFilament && (
               <div className="sidebar-block">
@@ -322,7 +362,7 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
               </div>
             )}
 
-            {/* Fans */}
+            {/* Speed + Fans */}
             <div className="sidebar-block">
               <div className="sidebar-label">Speed</div>
               <div className="sidebar-value">{speedLabel(d.spd_lvl)}</div>
@@ -409,25 +449,3 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
   );
 }
 
-function TempCell({
-  label,
-  current,
-  target,
-}: {
-  label: string;
-  current?: number;
-  target?: number;
-}) {
-  return (
-    <div className="temp-cell">
-      <span className="temp-label">{label}</span>
-      <span className="temp-value">
-        {current != null ? current.toFixed(1) : "--"}
-        <span className="temp-unit">°C</span>
-      </span>
-      {target != null && target > 0 && (
-        <span className="temp-target">→ {target}°C</span>
-      )}
-    </div>
-  );
-}
