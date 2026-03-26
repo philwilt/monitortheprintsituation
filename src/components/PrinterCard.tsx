@@ -265,6 +265,9 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                     d.mc_remaining_time != null && (
                       <span className="task-time">
                         {formatTime(d.mc_remaining_time)} remaining
+                        {d.layer_num != null && d.total_layer_num != null && (
+                          <>{" · "}layer {d.layer_num}/{d.total_layer_num}</>
+                        )}
                         {" · "}
                         done {new Date(Date.now() + d.mc_remaining_time * 60000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                       </span>

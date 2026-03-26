@@ -25,10 +25,6 @@ function App() {
         <HeroBanner />
 
         <main className="main-content">
-          <div className="section-header">
-            <span className="section-title">Fleet Overview</span>
-          </div>
-
           <div className="printer-grid">
             {printers.size === 0 && (
               <div className="empty-state">
