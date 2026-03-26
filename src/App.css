@@ -643,6 +643,78 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.sidebar-mag {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.sidebar-light {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.sidebar-light.on {
+  color: var(--text-secondary);
+}
+
+.sidebar-light-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.sidebar-light.on .sidebar-light-dot {
+  background: #d4b84a;
+  box-shadow: 0 0 6px rgba(212, 184, 74, 0.4);
+}
+
+.sidebar-xcam {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xcam-flag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-dim);
+}
+
+.xcam-flag.active {
+  color: var(--text-secondary);
+}
+
+.xcam-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.xcam-flag.active .xcam-dot {
+  background: var(--green);
+  box-shadow: 0 0 4px rgba(74, 155, 106, 0.4);
+}
+
+.ams-humidity {
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 5px;
+  display: inline-flex;
+  gap: 4px;
+}
+
 .sidebar-target {
   font-family: var(--font-mono);
   font-size: 0.58rem;

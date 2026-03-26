@@ -87,6 +87,31 @@ function situationLine(state: CardState, printer: PrinterInfo): string {
   }
 }
 
+function tempColor(temp: number, type: "nozzle" | "bed" | "chamber"): string {
+  if (type === "nozzle") {
+    if (temp < 40)  return "var(--text-dim)";
+    if (temp < 80)  return "#5a7ea8";  // cool blue
+    if (temp < 130) return "#4a9890";  // teal
+    if (temp < 170) return "#8fa84a";  // yellow-green
+    if (temp < 200) return "#b8a03a";  // yellow-amber
+    if (temp < 230) return "#b8923a";  // amber
+    if (temp < 260) return "#c0663a";  // orange
+    return "#c04a4a";                  // red
+  }
+  if (type === "bed") {
+    if (temp < 25)  return "var(--text-dim)";
+    if (temp < 45)  return "#5a7ea8";  // cool blue
+    if (temp < 60)  return "#b8a03a";  // amber
+    if (temp < 80)  return "#c0663a";  // orange
+    return "#c04a4a";                  // red
+  }
+  // chamber
+  if (temp < 25)  return "var(--text-dim)";
+  if (temp < 35)  return "#b8a03a";    // amber
+  if (temp < 45)  return "#c0663a";    // orange
+  return "#c04a4a";                    // red
+}
+
 function speedLabel(lvl?: number): string {
   switch (lvl) {
     case 1:
@@ -243,13 +268,13 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
             {isConnected && (d.nozzle_temper != null || d.bed_temper != null) && (
               <span className="situation-temps">
                 {d.nozzle_temper != null && (
-                  <span className="situation-temp">
+                  <span className="situation-temp" style={{ color: tempColor(d.nozzle_temper, "nozzle") }}>
                     <span className="situation-temp-label">nozzle</span>
                     {d.nozzle_temper.toFixed(0)}°
                   </span>
                 )}
                 {d.bed_temper != null && (
-                  <span className="situation-temp">
+                  <span className="situation-temp" style={{ color: tempColor(d.bed_temper, "bed") }}>
                     <span className="situation-temp-label">bed</span>
                     {d.bed_temper.toFixed(0)}°
                   </span>
@@ -336,7 +361,7 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
             {/* Temperatures */}
             <div className="sidebar-block">
               <div className="sidebar-label">Nozzle</div>
-              <div className="sidebar-value">
+              <div className="sidebar-value" style={d.nozzle_temper != null ? { color: tempColor(d.nozzle_temper, "nozzle") } : undefined}>
                 {d.nozzle_temper != null ? `${d.nozzle_temper.toFixed(0)}°C` : "--"}
               </div>
               {d.nozzle_target_temper != null && d.nozzle_target_temper > 0 && (
@@ -346,7 +371,7 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
 
             <div className="sidebar-block">
               <div className="sidebar-label">Bed</div>
-              <div className="sidebar-value">
+              <div className="sidebar-value" style={d.bed_temper != null ? { color: tempColor(d.bed_temper, "bed") } : undefined}>
                 {d.bed_temper != null ? `${d.bed_temper.toFixed(0)}°C` : "--"}
               </div>
               {d.bed_target_temper != null && d.bed_target_temper > 0 && (
@@ -357,7 +382,9 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
             {d.chamber_temper != null && (
               <div className="sidebar-block">
                 <div className="sidebar-label">Chamber</div>
-                <div className="sidebar-value">{d.chamber_temper.toFixed(0)}°C</div>
+                <div className="sidebar-value" style={{ color: tempColor(d.chamber_temper, "chamber") }}>
+                  {d.chamber_temper.toFixed(0)}°C
+                </div>
               </div>
             )}
 
@@ -380,7 +407,12 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
             {/* Speed + Fans */}
             <div className="sidebar-block">
               <div className="sidebar-label">Speed</div>
-              <div className="sidebar-value">{speedLabel(d.spd_lvl)}</div>
+              <div className="sidebar-value">
+                {speedLabel(d.spd_lvl)}
+                {d.spd_mag != null && (
+                  <span className="sidebar-mag"> {d.spd_mag}%</span>
+                )}
+              </div>
             </div>
 
             <div className="sidebar-block">
@@ -397,10 +429,58 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
               </div>
             </div>
 
+            {/* Chamber light */}
+            {d.lights_report && d.lights_report.length > 0 && (() => {
+              const light = d.lights_report.find((l) => l.node === "chamber_light");
+              if (!light) return null;
+              const on = light.mode === "on";
+              return (
+                <div className="sidebar-block">
+                  <div className="sidebar-label">Chamber Light</div>
+                  <div className={`sidebar-light${on ? " on" : ""}`}>
+                    <span className="sidebar-light-dot" />
+                    {on ? "On" : "Off"}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* AI Detection */}
+            {d.xcam && (d.xcam.first_layer_inspector != null || d.xcam.spaghetti_detector != null) && (
+              <div className="sidebar-block">
+                <div className="sidebar-label">AI Detection</div>
+                <div className="sidebar-xcam">
+                  {d.xcam.first_layer_inspector != null && (
+                    <div className={`xcam-flag${d.xcam.first_layer_inspector ? " active" : ""}`}>
+                      <span className="xcam-dot" />
+                      First Layer
+                    </div>
+                  )}
+                  {d.xcam.spaghetti_detector != null && (
+                    <div className={`xcam-flag${d.xcam.spaghetti_detector ? " active" : ""}`}>
+                      <span className="xcam-dot" />
+                      Spaghetti
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* AMS (full) */}
             {d.ams?.ams && d.ams.ams.length > 0 && (
               <div className="sidebar-block sidebar-ams">
-                <div className="sidebar-label">AMS</div>
+                <div className="sidebar-label">
+                  AMS
+                  {d.ams.ams.map((unit) => unit.humidity).filter(Boolean).length > 0 && (
+                    <span className="ams-humidity">
+                      {d.ams.ams.map((unit, i) =>
+                        unit.humidity ? (
+                          <span key={i}>{unit.humidity}%RH</span>
+                        ) : null
+                      )}
+                    </span>
+                  )}
+                </div>
                 <div className="sidebar-trays">
                   {d.ams.ams.flatMap(
                     (unit) =>
