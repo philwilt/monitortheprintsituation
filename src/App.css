@@ -808,7 +808,14 @@ body {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.progress-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .progress-bar-track {
+  flex: 1;
   height: 3px;
   background: var(--border);
   border-radius: 2px;
@@ -846,11 +853,12 @@ body {
 
 .progress-pct {
   font-family: var(--font-mono);
-  font-size: 1.4rem;
-  font-weight: 700;
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--green);
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .progress-pct-unit {

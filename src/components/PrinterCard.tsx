@@ -278,27 +278,17 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
               {/* Progress */}
               {d.gcode_state === "RUNNING" && (
                 <div className="progress-section">
-                  <div className="progress-bar-track">
-                    <div
-                      className="progress-bar-fill"
-                      style={{ width: `${d.mc_percent || 0}%` }}
-                    />
-                  </div>
-                  <div className="progress-meta">
+                  <div className="progress-bar-row">
+                    <div className="progress-bar-track">
+                      <div
+                        className="progress-bar-fill"
+                        style={{ width: `${d.mc_percent || 0}%` }}
+                      />
+                    </div>
                     <span className="progress-pct">
                       {d.mc_percent || 0}
                       <span className="progress-pct-unit">%</span>
                     </span>
-                    <div className="progress-detail">
-                      <span className="progress-remaining">
-                        {formatTime(d.mc_remaining_time)}
-                      </span>
-                      {d.layer_num != null && d.total_layer_num != null && (
-                        <div className="progress-layers">
-                          layer {d.layer_num} / {d.total_layer_num}
-                        </div>
-                      )}
-                    </div>
                   </div>
                 </div>
               )}
