@@ -26,7 +26,6 @@ const PRINTERS_FILE = path.join(process.cwd(), "server/printers.json");
 let PRINTERS;
 try {
   PRINTERS = JSON.parse(fs.readFileSync(PRINTERS_FILE, "utf8"));
-  console.log(`Loaded ${PRINTERS.length} printer(s):`, PRINTERS.map((p) => p.name).join(", "));
 } catch {
   console.error(
     "ERROR: server/printers.json not found.\n" +
@@ -39,7 +38,6 @@ try {
 let tutkUrls = {};
 try {
   tutkUrls = JSON.parse(fs.readFileSync(TUTK_URLS_FILE, "utf8"));
-  console.log("Loaded TUTK URLs:", Object.keys(tutkUrls));
 } catch {
   // No cache yet
 }
@@ -60,8 +58,7 @@ fs.watchFile(URL_TXT, { interval: 1000 }, () => {
     if (tutkUrls[serial] !== url) {
       tutkUrls[serial] = url;
       saveTutkUrls();
-      console.log(`Updated TUTK URL for ${printer.name} (${serial})`);
-      // Restart that printer's camera stream
+      console.log(`TUTK URL refreshed: ${printer.name}`);
       restartCameraStream(printer.id);
     }
   } catch {
@@ -83,6 +80,47 @@ function broadcast(data) {
       client.send(msg);
     }
   }
+}
+
+// ---- Camera frame helpers ----
+const JPEG_SOI = Buffer.from([0xff, 0xd8, 0xff]);
+const JPEG_EOI = Buffer.from([0xff, 0xd9]);
+const MAX_BUF = 4 * 1024 * 1024; // 4MB safety cap
+
+// Send a frame to all connected clients, skipping any that are backed up
+function broadcastFrame(printerId, frame) {
+  const msg = JSON.stringify({
+    type: "camera_frame",
+    printer: printerId,
+    frame: frame.toString("base64"),
+  });
+  for (const client of wss.clients) {
+    if (client.readyState === 1 && client.bufferedAmount < 512 * 1024) {
+      client.send(msg);
+    }
+  }
+}
+
+// Parse complete JPEG frames out of a rolling buffer.
+// Returns the unconsumed remainder as a fresh allocation (releases old buffer).
+function parseJpegFrames(buf, onFrame) {
+  if (buf.length > MAX_BUF) return Buffer.alloc(0); // safety: drop if too large
+
+  while (true) {
+    const start = buf.indexOf(JPEG_SOI);
+    if (start === -1) return Buffer.alloc(0);
+    if (start > 0) buf = buf.subarray(start);
+
+    const end = buf.indexOf(JPEG_EOI, 2);
+    if (end === -1) break;
+
+    // Copy frame to a fresh buffer so the old allocation can be GC'd
+    onFrame(Buffer.from(buf.subarray(0, end + 2)));
+    buf = buf.subarray(end + 2);
+  }
+
+  // Compact remainder into a fresh allocation to release the original chunk
+  return Buffer.from(buf);
 }
 
 // ---- MQTT ----
@@ -151,7 +189,7 @@ for (const printer of PRINTERS) {
   });
 
   client.on("error", (err) => {
-    console.error(`MQTT error ${printer.name}:`, err.message);
+    console.error(`MQTT error ${printer.name}: ${err.message}`);
     printerStates.set(printer.id, {
       ...printer,
       accessCode: undefined,
@@ -174,20 +212,15 @@ function startCameraStream(printerId) {
 
   const tutkUrl = tutkUrls[printer.serial];
   if (!tutkUrl) {
-    console.log(
-      `No TUTK URL for ${printer.name} — open its camera in BambuStudio to register it`
-    );
+    console.log(`No TUTK URL for ${printer.name} — open its camera in BambuStudio to register it`);
     return;
   }
 
-  // Kill any existing process
   const existing = cameraProcesses.get(printerId);
   if (existing) {
     existing.kill();
     cameraProcesses.delete(printerId);
   }
-
-  console.log(`Starting camera stream for ${printer.name}...`);
 
   const libPathVar = IS_MAC ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
   const bambuProc = spawn(BAMBU_SOURCE, [tutkUrl], {
@@ -197,70 +230,40 @@ function startCameraStream(printerId) {
   const ffmpegProc = spawn(
     FFMPEG,
     [
-      "-fflags", "nobuffer",
-      "-flags", "low_delay",
-      "-analyzeduration", "10",
-      "-probesize", "3200",
       "-f", "h264",
       "-i", "pipe:",
       "-f", "mjpeg",
-      "-q:v", "4",
-      "-vf", "fps=5",
+      "-q:v", "1",
+      "-vf", "fps=30",
       "pipe:1",
     ],
     { env: process.env }
   );
 
   bambuProc.stdout.pipe(ffmpegProc.stdin);
-  bambuProc.stderr.on("data", (d) => {
-    const msg = d.toString().trim();
-    if (msg) console.log(`[${printer.name} cam] ${msg}`);
-  });
-  ffmpegProc.stderr.on("data", (d) => {
-    const msg = d.toString().trim();
-    if (msg) console.log(`[${printer.name} ffmpeg] ${msg}`);
-  });
+  bambuProc.stderr.on("data", () => {});
+  ffmpegProc.stderr.on("data", () => {});
+  ffmpegProc.stdin.on("error", () => {}); // suppress EPIPE when bambu_source dies
 
-  // Parse MJPEG frames from ffmpeg stdout
   let buf = Buffer.alloc(0);
+  let firstFrame = true;
   ffmpegProc.stdout.on("data", (chunk) => {
-    buf = Buffer.concat([buf, chunk]);
-
-    while (true) {
-      // Find JPEG start marker (FF D8 FF)
-      const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
-      if (start === -1) {
-        buf = Buffer.alloc(0);
-        break;
+    buf = parseJpegFrames(Buffer.concat([buf, chunk]), (frame) => {
+      if (firstFrame) {
+        console.log(`Camera live: ${printer.name} (TUTK)`);
+        firstFrame = false;
       }
-      if (start > 0) buf = buf.subarray(start);
-
-      // Find JPEG end marker (FF D9)
-      const end = buf.indexOf(Buffer.from([0xff, 0xd9]), 2);
-      if (end === -1) break;
-
-      const frame = buf.subarray(0, end + 2);
-      buf = buf.subarray(end + 2);
-      const msg = JSON.stringify({
-        type: "camera_frame",
-        printer: printerId,
-        frame: frame.toString("base64"),
-      });
-
-      for (const client of wss.clients) {
-        if (client.readyState === 1) client.send(msg);
-      }
-    }
+      broadcastFrame(printerId, frame);
+    });
   });
 
   bambuProc.on("exit", (code) => {
-    console.log(`${printer.name} bambu_source exited (${code}), restarting...`);
     cameraProcesses.delete(printerId);
+    if (firstFrame) console.log(`Camera failed: ${printer.name} (TUTK exited ${code}) — TUTK URL may be expired, open camera in BambuStudio`);
     setTimeout(() => startCameraStream(printerId), 5000);
   });
 
-  ffmpegProc.on("exit", (code) => {
-    console.log(`${printer.name} ffmpeg exited (${code})`);
+  ffmpegProc.on("exit", () => {
     bambuProc.kill();
   });
 
@@ -268,7 +271,7 @@ function startCameraStream(printerId) {
 }
 
 // ---- RTP camera stream (BambuStudio Go Live, X1-series) ----
-const rtpBackoff = new Map(); // printerId → delay ms
+const rtpBackoff = new Map();
 
 function startRTPCameraStream(printerId) {
   const printer = PRINTERS.find((p) => p.id === printerId);
@@ -280,48 +283,34 @@ function startRTPCameraStream(printerId) {
     cameraProcesses.delete(printerId);
   }
 
-  console.log(`Starting RTP camera stream for ${printer.name} (requires BambuStudio Go Live)...`);
-
   const ffmpegProc = spawn(FFMPEG, [
     "-protocol_whitelist", "file,udp,rtp",
     "-i", SDP_FILE,
     "-f", "mjpeg",
-    "-q:v", "4",
-    "-vf", "fps=5",
+    "-q:v", "1",
+    "-vf", "fps=30",
     "pipe:1",
   ], { env: process.env });
 
-  ffmpegProc.stderr.on("data", () => {}); // suppress ffmpeg noise
+  ffmpegProc.stderr.on("data", () => {});
 
   let buf = Buffer.alloc(0);
   let firstFrame = true;
   ffmpegProc.stdout.on("data", (chunk) => {
-    buf = Buffer.concat([buf, chunk]);
-    while (true) {
-      const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
-      if (start === -1) { buf = Buffer.alloc(0); break; }
-      if (start > 0) buf = buf.subarray(start);
-      const end = buf.indexOf(Buffer.from([0xff, 0xd9]), 2);
-      if (end === -1) break;
-      const frame = buf.subarray(0, end + 2);
-      buf = buf.subarray(end + 2);
+    buf = parseJpegFrames(Buffer.concat([buf, chunk]), (frame) => {
       if (firstFrame) {
-        console.log(`[${printer.name}] RTP camera: first frame (${frame.length} bytes)`);
+        console.log(`Camera live: ${printer.name} (RTP)`);
         rtpBackoff.delete(printerId);
         firstFrame = false;
       }
-      const msg = JSON.stringify({ type: "camera_frame", printer: printerId, frame: frame.toString("base64") });
-      for (const client of wss.clients) {
-        if (client.readyState === 1) client.send(msg);
-      }
-    }
+      broadcastFrame(printerId, frame);
+    });
   });
 
-  ffmpegProc.on("exit", (code) => {
+  ffmpegProc.on("exit", () => {
     cameraProcesses.delete(printerId);
-    const delay = Math.min(rtpBackoff.get(printerId) || 5000, 60000); // cap at 1 min
+    const delay = Math.min(rtpBackoff.get(printerId) || 5000, 60000);
     rtpBackoff.set(printerId, delay * 2);
-    console.log(`${printer.name} RTP stream ended, retrying in ${Math.round(delay / 1000)}s (start Go Live in BambuStudio)`);
     setTimeout(() => startRTPCameraStream(printerId), delay);
   });
 
@@ -329,7 +318,7 @@ function startRTPCameraStream(printerId) {
 }
 
 // ---- TLS camera stream (port 6000, older Bambu models) ----
-const tlsBackoff = new Map(); // printerId → delay ms
+const tlsBackoff = new Map();
 
 function startTLSCameraStream(printerId) {
   const printer = PRINTERS.find((p) => p.id === printerId);
@@ -341,15 +330,11 @@ function startTLSCameraStream(printerId) {
     cameraProcesses.delete(printerId);
   }
 
-  console.log(`Starting TLS camera stream for ${printer.name}...`);
-
   const socket = tls.connect(6000, printer.ip, { rejectUnauthorized: false }, () => {
-    console.log(`[${printer.name}] TLS connected, sending auth...`);
     const header = Buffer.from([0x00, 0x00, 0x00, 0x40, 0xb8, 0xce, 0x5f, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     const user = Buffer.alloc(32);
     Buffer.from("bblp").copy(user);
     const pass = Buffer.alloc(32);
-    // Try access code as raw binary bytes (e.g. "30cef6e7" → 0x30,0xce,0xf6,0xe7)
     Buffer.from(printer.accessCode, "hex").copy(pass);
     socket.write(Buffer.concat([header, user, pass]));
   });
@@ -360,6 +345,7 @@ function startTLSCameraStream(printerId) {
 
   socket.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
+    if (buf.length > MAX_BUF) { buf = Buffer.alloc(0); return; }
 
     while (buf.length >= 16) {
       if (!buf.subarray(0, 4).equals(MAGIC)) {
@@ -371,34 +357,26 @@ function startTLSCameraStream(printerId) {
       const dataLen = buf.readUInt32LE(8);
       if (buf.length < 16 + dataLen) break;
 
-      const frame = buf.subarray(16, 16 + dataLen);
-      buf = buf.subarray(16 + dataLen);
+      // Copy frame and compact remainder to release the old allocation
+      const frame = Buffer.from(buf.subarray(16, 16 + dataLen));
+      buf = Buffer.from(buf.subarray(16 + dataLen));
       framesFound++;
       if (framesFound === 1) {
-        console.log(`[${printer.name}] TLS camera: first frame (${frame.length} bytes)`);
-        tlsBackoff.delete(printerId); // reset backoff on success
+        console.log(`Camera live: ${printer.name} (TLS)`);
+        tlsBackoff.delete(printerId);
       }
-
-      const msg = JSON.stringify({
-        type: "camera_frame",
-        printer: printerId,
-        frame: frame.toString("base64"),
-      });
-      for (const client of wss.clients) {
-        if (client.readyState === 1) client.send(msg);
-      }
+      broadcastFrame(printerId, frame);
     }
   });
 
   socket.on("error", (err) => {
-    console.error(`${printer.name} TLS camera error:`, err.message);
+    console.error(`Camera error ${printer.name}: ${err.message}`);
   });
 
   socket.on("close", () => {
     cameraProcesses.delete(printerId);
-    const delay = Math.min(tlsBackoff.get(printerId) || 5000, 300000); // cap at 5 min
+    const delay = Math.min(tlsBackoff.get(printerId) || 5000, 300000);
     tlsBackoff.set(printerId, delay * 2);
-    console.log(`${printer.name} TLS camera closed, retrying in ${Math.round(delay / 1000)}s`);
     setTimeout(() => startTLSCameraStream(printerId), delay);
   });
 
@@ -424,17 +402,9 @@ for (const printer of PRINTERS) {
 
 // ---- WebSocket connection handler ----
 wss.on("connection", (ws) => {
-  console.log("Frontend connected");
   for (const [id, state] of printerStates) {
     ws.send(JSON.stringify({ type: "printer_status", printer: id, state }));
   }
-  ws.on("close", () => console.log("Frontend disconnected"));
 });
 
-console.log("The Situation server — ws://localhost:3001");
-console.log(
-  `TUTK URLs cached: ${Object.keys(tutkUrls).length}/${PRINTERS.length} printers`
-);
-console.log(
-  `Missing: ${PRINTERS.filter((p) => !tutkUrls[p.serial]).map((p) => p.name).join(", ") || "none"}`
-);
+console.log(`The Situation — ${PRINTERS.map((p) => p.name).join(", ")} — ws://localhost:3001`);

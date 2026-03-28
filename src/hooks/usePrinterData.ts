@@ -71,12 +71,20 @@ interface WSMessage {
 
 export function usePrinterData() {
   const [printers, setPrinters] = useState<Map<string, PrinterInfo>>(new Map());
-  const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(
-    new Map()
-  );
+  const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(new Map());
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Pending camera frames — flushed once per animation frame
+  // Blob URLs so the browser can GC each frame after we revoke it
+  const pendingFramesRef = useRef<Map<string, string>>(new Map());
+  const frameRafRef = useRef<number | undefined>(undefined);
+  const blobUrlsRef = useRef<Map<string, string>>(new Map());
+
+  // Pending printer data patches — batches rapid MQTT bursts into one render
+  const pendingDataRef = useRef<Map<string, { data: PrinterData; timestamp?: number }>>(new Map());
+  const dataRafRef = useRef<number | undefined>(undefined);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -101,26 +109,55 @@ export function usePrinterData() {
       }
 
       if (msg.type === "printer_data" && msg.data) {
-        setPrinters((prev) => {
-          const next = new Map(prev);
-          const existing = next.get(msg.printer);
-          if (existing) {
-            next.set(msg.printer, {
-              ...existing,
-              data: { ...(existing.data || {}), ...msg.data! },
-              lastUpdate: msg.timestamp,
-            });
-          }
-          return next;
+        const pending = pendingDataRef.current.get(msg.printer);
+        pendingDataRef.current.set(msg.printer, {
+          data: { ...(pending?.data || {}), ...msg.data },
+          timestamp: msg.timestamp,
         });
+        if (dataRafRef.current === undefined) {
+          dataRafRef.current = requestAnimationFrame(() => {
+            dataRafRef.current = undefined;
+            const batch = new Map(pendingDataRef.current);
+            pendingDataRef.current.clear();
+            setPrinters((prev) => {
+              const next = new Map(prev);
+              for (const [printerId, { data, timestamp }] of batch) {
+                const existing = next.get(printerId);
+                if (existing) {
+                  next.set(printerId, {
+                    ...existing,
+                    data: { ...(existing.data || {}), ...data },
+                    lastUpdate: timestamp,
+                  });
+                }
+              }
+              return next;
+            });
+          });
+        }
       }
 
       if (msg.type === "camera_frame" && msg.frame) {
-        setCameraFrames((prev) => {
-          const next = new Map(prev);
-          next.set(msg.printer, `data:image/jpeg;base64,${msg.frame}`);
-          return next;
-        });
+        // Revoke the previous pending blob for this printer (if not yet flushed)
+        const prevPending = pendingFramesRef.current.get(msg.printer);
+        if (prevPending) URL.revokeObjectURL(prevPending);
+
+        const arr = Uint8Array.from(atob(msg.frame), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([arr], { type: "image/jpeg" }));
+        pendingFramesRef.current.set(msg.printer, url);
+
+        if (frameRafRef.current === undefined) {
+          frameRafRef.current = requestAnimationFrame(() => {
+            frameRafRef.current = undefined;
+            // Revoke previous live blob URLs before replacing them
+            for (const [id, oldUrl] of blobUrlsRef.current) {
+              if (pendingFramesRef.current.has(id)) URL.revokeObjectURL(oldUrl);
+            }
+            const next = new Map(pendingFramesRef.current);
+            for (const [id, url] of next) blobUrlsRef.current.set(id, url);
+            setCameraFrames(next);
+          });
+        }
       }
     };
 
@@ -138,7 +175,11 @@ export function usePrinterData() {
     connect();
     return () => {
       clearTimeout(reconnectTimer.current);
+      if (frameRafRef.current !== undefined) cancelAnimationFrame(frameRafRef.current);
+      if (dataRafRef.current !== undefined) cancelAnimationFrame(dataRafRef.current);
       wsRef.current?.close();
+      for (const url of blobUrlsRef.current.values()) URL.revokeObjectURL(url);
+      for (const url of pendingFramesRef.current.values()) URL.revokeObjectURL(url);
     };
   }, [connect]);
 

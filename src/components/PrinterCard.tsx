@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 
 interface Props {
@@ -112,6 +112,16 @@ function tempColor(temp: number, type: "nozzle" | "bed" | "chamber"): string {
   return "#c04a4a";                    // red
 }
 
+function fanColor(speed?: string): string {
+  const pct = parseInt(speed || "0", 10);
+  if (pct === 0)  return "var(--text-dim)";
+  if (pct < 20)   return "#5a7ea8";  // cool blue
+  if (pct < 40)   return "#4a9890";  // teal
+  if (pct < 60)   return "#8fa84a";  // yellow-green
+  if (pct < 80)   return "#b8923a";  // amber
+  return "#c04a4a";                  // red
+}
+
 function speedLabel(lvl?: number): string {
   switch (lvl) {
     case 1:
@@ -132,12 +142,15 @@ function getActiveFilament(
 ): { color: string; type: string } | null {
   const d = printer.data;
   if (!d) return null;
+  const trayNow = d.ams?.tray_now;
+  const globalIdx = trayNow != null ? parseInt(trayNow, 10) : NaN;
 
-  if (d.ams?.ams && d.ams.ams.length > 0 && d.ams.tray_now != null) {
+  if (d.ams?.ams && d.ams.ams.length > 0 && !isNaN(globalIdx) && globalIdx < 254) {
+    // Strategy 1: direct tray ID match (firmware sends global IDs on tray.id)
     for (const unit of d.ams.ams) {
       if (!unit.tray) continue;
       for (const tray of unit.tray) {
-        if (tray.id === d.ams.tray_now) {
+        if (tray.id === trayNow) {
           return {
             color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
             type: tray.tray_type || "Unknown",
@@ -145,14 +158,44 @@ function getActiveFilament(
         }
       }
     }
+    // Strategy 2: counter-based — tray_now is a global index, tray IDs are per-unit ("0"-"3")
+    let counter = 0;
+    for (const unit of d.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (counter === globalIdx) {
+          return {
+            color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
+            type: tray.tray_type || "Unknown",
+          };
+        }
+        counter++;
+      }
+    }
+    // Strategy 3: AMS HT / non-sequential units — tray_now matches the unit's own id
+    // (e.g. AMS HT reports unit id="128", tray_now="128")
+    for (const unit of d.ams.ams) {
+      if (unit.id === trayNow && unit.tray && unit.tray.length > 0) {
+        const tray = unit.tray[0];
+        return {
+          color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
+          type: tray.tray_type || "Unknown",
+        };
+      }
+    }
   }
 
+  // tray_now >= 254 = external/vir_slot; also try matching by vir_slot id
   if (d.vir_slot && d.vir_slot.length > 0) {
-    const slot = d.vir_slot[0];
-    return {
-      color: `#${slot.tray_color?.slice(0, 6) || "888"}`,
-      type: slot.tray_type || "Unknown",
-    };
+    if (trayNow != null) {
+      const match = d.vir_slot.find((s) => s.id === trayNow);
+      if (match && match.tray_type) {
+        return {
+          color: `#${match.tray_color?.slice(0, 6) || "888"}`,
+          type: match.tray_type,
+        };
+      }
+    }
   }
 
   return null;
@@ -187,7 +230,7 @@ function detectAnomaly(printer: PrinterInfo): string | null {
   return null;
 }
 
-export function PrinterCard({ printer, cameraFrame }: Props) {
+export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const d = printer.data;
   const cardState = getCardState(printer);
@@ -265,7 +308,7 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
           <div className="situation-line">
             <span className="situation-icon">&#x25C6;</span>
             <span className="situation-text">{situationLine(cardState, printer)}</span>
-            {isConnected && (d.nozzle_temper != null || d.bed_temper != null) && (
+            {isConnected && (
               <span className="situation-temps">
                 {d.nozzle_temper != null && (
                   <span className="situation-temp" style={{ color: tempColor(d.nozzle_temper, "nozzle") }}>
@@ -277,6 +320,18 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
                   <span className="situation-temp" style={{ color: tempColor(d.bed_temper, "bed") }}>
                     <span className="situation-temp-label">bed</span>
                     {d.bed_temper.toFixed(0)}°
+                  </span>
+                )}
+                {d.cooling_fan_speed != null && (
+                  <span className="situation-temp" style={{ color: fanColor(d.cooling_fan_speed) }}>
+                    <span className="situation-temp-label">part</span>
+                    {d.cooling_fan_speed}%
+                  </span>
+                )}
+                {d.big_fan1_speed != null && (
+                  <span className="situation-temp" style={{ color: fanColor(d.big_fan1_speed) }}>
+                    <span className="situation-temp-label">aux</span>
+                    {d.big_fan1_speed}%
                   </span>
                 )}
               </span>
@@ -417,14 +472,14 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
 
             <div className="sidebar-block">
               <div className="sidebar-label">Part Fan</div>
-              <div className="sidebar-value">
+              <div className="sidebar-value" style={{ color: fanColor(d.cooling_fan_speed) }}>
                 {d.cooling_fan_speed || "--"}%
               </div>
             </div>
 
             <div className="sidebar-block">
               <div className="sidebar-label">Aux Fan</div>
-              <div className="sidebar-value">
+              <div className="sidebar-value" style={{ color: fanColor(d.big_fan1_speed) }}>
                 {d.big_fan1_speed || "--"}%
               </div>
             </div>
@@ -515,7 +570,7 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
             {/* AMS Lite / external spool */}
             {d.vir_slot && d.vir_slot.length > 0 && (
               <div className="sidebar-block sidebar-ams">
-                <div className="sidebar-label">AMS Lite</div>
+                <div className="sidebar-label">External</div>
                 <div className="sidebar-trays">
                   {d.vir_slot.map((slot) => {
                     const color = `#${slot.tray_color?.slice(0, 6) || "444"}`;
@@ -542,5 +597,5 @@ export function PrinterCard({ printer, cameraFrame }: Props) {
       </div>
     </div>
   );
-}
+});
 
