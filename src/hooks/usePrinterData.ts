@@ -110,8 +110,13 @@ export function usePrinterData() {
 
       if (msg.type === "printer_data" && msg.data) {
         const pending = pendingDataRef.current.get(msg.printer);
+        const pendingData = pending?.data || {};
+        const mergedPatch = { ...pendingData, ...msg.data };
+        if (msg.data.ams && pendingData.ams) {
+          mergedPatch.ams = { ...pendingData.ams, ...msg.data.ams };
+        }
         pendingDataRef.current.set(msg.printer, {
-          data: { ...(pending?.data || {}), ...msg.data },
+          data: mergedPatch,
           timestamp: msg.timestamp,
         });
         if (dataRafRef.current === undefined) {
@@ -124,9 +129,14 @@ export function usePrinterData() {
               for (const [printerId, { data, timestamp }] of batch) {
                 const existing = next.get(printerId);
                 if (existing) {
+                  const existingData = existing.data || {};
+                  const mergedData = { ...existingData, ...data };
+                  if (data.ams && existingData.ams) {
+                    mergedData.ams = { ...existingData.ams, ...data.ams };
+                  }
                   next.set(printerId, {
                     ...existing,
-                    data: { ...(existing.data || {}), ...data },
+                    data: mergedData,
                     lastUpdate: timestamp,
                   });
                 }

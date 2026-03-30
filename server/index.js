@@ -170,10 +170,17 @@ for (const printer of PRINTERS) {
       const payload = JSON.parse(message.toString());
       if (!payload.print) return;
       const existing = printerStates.get(printer.id) || {};
+      const existingData = existing.data || {};
+      // Deep-merge nested objects so tray_now and other sub-fields
+      // aren't wiped by partial MQTT updates that omit them
+      const mergedData = { ...existingData, ...payload.print };
+      if (payload.print.ams && existingData.ams) {
+        mergedData.ams = { ...existingData.ams, ...payload.print.ams };
+      }
       const merged = {
         ...existing,
         status: "connected",
-        data: { ...(existing.data || {}), ...payload.print },
+        data: mergedData,
         lastUpdate: Date.now(),
       };
       printerStates.set(printer.id, merged);

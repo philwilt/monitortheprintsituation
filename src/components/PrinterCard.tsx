@@ -371,7 +371,16 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
                           <>{" · "}layer {d.layer_num}/{d.total_layer_num}</>
                         )}
                         {" · "}
-                        done {new Date(Date.now() + d.mc_remaining_time * 60000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                        done {(() => {
+                          const finish = new Date(Date.now() + d.mc_remaining_time * 60000);
+                          const todayMid = new Date().setHours(0, 0, 0, 0);
+                          const finishMid = new Date(finish).setHours(0, 0, 0, 0);
+                          const daysAhead = Math.floor((finishMid - todayMid) / 86400000);
+                          const time = finish.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                          if (daysAhead === 0) return time;
+                          if (daysAhead === 1) return `tomorrow ${time}`;
+                          return `${finish.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+                        })()}
                       </span>
                     )}
                 </div>
