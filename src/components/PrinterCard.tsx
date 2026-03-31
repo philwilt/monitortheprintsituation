@@ -76,7 +76,7 @@ function situationLine(state: CardState, printer: PrinterInfo): string {
     case "paused":
       return "Needs your attention";
     case "error":
-      return "Not ideal";
+      return "Something went wrong";
     case "finished":
       return "Job done";
     case "preparing":
@@ -306,7 +306,7 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
         {/* Left: main content */}
         <div className="card-main">
           {/* Situation line */}
-          <div className={`situation-line${cardState === "paused" ? " situation-urgent" : ""}`}>
+          <div className={`situation-line${cardState === "paused" || cardState === "error" ? " situation-urgent" : ""}`}>
             <span className="situation-icon">&#x25C6;</span>
             <span className="situation-text">{situationLine(cardState, printer)}</span>
             {isConnected && (

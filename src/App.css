@@ -795,10 +795,6 @@ body {
   min-width: 0;
 }
 
-.situation-urgent {
-  color: var(--amber);
-}
-
 .situation-urgent .situation-icon {
   opacity: 1;
   animation: slow-pulse 1s ease-in-out infinite;
@@ -807,6 +803,18 @@ body {
 .situation-urgent .situation-text {
   font-weight: 600;
   letter-spacing: 0.03em;
+}
+
+.state-paused .situation-urgent {
+  color: var(--amber);
+}
+
+.state-error .situation-urgent {
+  color: var(--red);
+}
+
+.state-error .situation-urgent .situation-icon {
+  animation-duration: 0.6s;
 }
 
 .situation-temps {
