@@ -52,6 +52,7 @@ export interface PrinterData {
     tray_color: string;
     tray_type: string;
     tray_sub_brands: string;
+    tray_uuid?: string;
     cols?: string[];
   }>;
   xcam?: {
@@ -70,18 +71,21 @@ interface WSMessage {
   timestamp?: number;
 }
 
-export function usePrinterData() {
+export function usePrinterData(livePrinters: Set<string> = new Set()) {
   const [printers, setPrinters] = useState<Map<string, PrinterInfo>>(new Map());
   const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(new Map());
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const frameIntervalRef = useRef(livePrinters);
+  frameIntervalRef.current = livePrinters;
 
   // Pending camera frames — flushed once per animation frame
   // Blob URLs so the browser can GC each frame after we revoke it
   const pendingFramesRef = useRef<Map<string, string>>(new Map());
   const frameRafRef = useRef<number | undefined>(undefined);
   const blobUrlsRef = useRef<Map<string, string>>(new Map());
+  const lastFrameTimeRef = useRef<Map<string, number>>(new Map());
 
   // Pending printer data patches — batches rapid MQTT bursts into one render
   const pendingDataRef = useRef<Map<string, { data: PrinterData; timestamp?: number }>>(new Map());
@@ -149,6 +153,14 @@ export function usePrinterData() {
       }
 
       if (msg.type === "camera_frame" && msg.frame) {
+        // Skip frame if in snapshot mode and not enough time has passed
+        const isLive = frameIntervalRef.current.has(msg.printer);
+        if (!isLive) {
+          const last = lastFrameTimeRef.current.get(msg.printer) ?? 0;
+          if (Date.now() - last < 30000) return;
+          lastFrameTimeRef.current.set(msg.printer, Date.now());
+        }
+
         // Revoke the previous pending blob for this printer (if not yet flushed)
         const prevPending = pendingFramesRef.current.get(msg.printer);
         if (prevPending) URL.revokeObjectURL(prevPending);

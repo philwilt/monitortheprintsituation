@@ -1,10 +1,11 @@
-import { useState, memo } from "react";
+import { memo } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 import { decodeHMS } from "../utils/hms";
 
 interface Props {
   printer: PrinterInfo;
   cameraFrame?: string;
+  hideCamera?: boolean;
 }
 
 function formatTime(minutes?: number): string {
@@ -231,8 +232,7 @@ function detectAnomaly(printer: PrinterInfo): string | null {
   return null;
 }
 
-export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: Props) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hideCamera }: Props) {
   const d = printer.data;
   const cardState = getCardState(printer);
   const anomaly =
@@ -267,171 +267,225 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
           <span className={`state-tag ${cardState}`}>
             {stateLabel(cardState)}
           </span>
-          {isConnected && (
-            <button
-              className={`sidebar-toggle${sidebarOpen ? " open" : ""}`}
-              onClick={() => setSidebarOpen((o) => !o)}
-              title={sidebarOpen ? "Hide details" : "Show details"}
-            >
-              {!sidebarOpen && (
-                <span className="sidebar-toggle-peek">
-                  {activeFilament && (
-                    <>
-                      <span
-                        className="peek-swatch"
-                        style={{ background: activeFilament.color }}
-                      />
-                      <span className="peek-text">{activeFilament.type}</span>
-                      <span className="peek-divider">·</span>
-                    </>
-                  )}
-                  <span className="peek-text">{speedLabel(d.spd_lvl)}</span>
-                  {d.wifi_signal && (
-                    <>
-                      <span className="peek-divider">·</span>
-                      <span className="peek-text">{d.wifi_signal}</span>
-                    </>
-                  )}
-                  <span className="peek-chevron">&#x203A;</span>
-                </span>
-              )}
-              {sidebarOpen && <span>&#x203A;</span>}
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Two-column body */}
-      <div className="card-columns">
-        {/* Left: main content */}
-        <div className="card-main">
-          {/* Situation line */}
-          <div className={`situation-line${cardState === "paused" || cardState === "error" ? " situation-urgent" : ""}`}>
-            <span className="situation-icon">&#x25C6;</span>
-            <span className="situation-text">{situationLine(cardState, printer)}</span>
-            {isConnected && (
-              <span className="situation-temps">
-                {d.nozzle_temper != null && (
-                  <span className="situation-temp" style={{ color: tempColor(d.nozzle_temper, "nozzle") }}>
-                    <span className="situation-temp-label">nozzle</span>
-                    {d.nozzle_temper.toFixed(0)}°
-                  </span>
-                )}
-                {d.bed_temper != null && (
-                  <span className="situation-temp" style={{ color: tempColor(d.bed_temper, "bed") }}>
-                    <span className="situation-temp-label">bed</span>
-                    {d.bed_temper.toFixed(0)}°
-                  </span>
-                )}
-                {d.cooling_fan_speed != null && (
-                  <span className="situation-temp" style={{ color: fanColor(d.cooling_fan_speed) }}>
-                    <span className="situation-temp-label">part</span>
-                    {d.cooling_fan_speed}%
-                  </span>
-                )}
-                {d.big_fan1_speed != null && (
-                  <span className="situation-temp" style={{ color: fanColor(d.big_fan1_speed) }}>
-                    <span className="situation-temp-label">aux</span>
-                    {d.big_fan1_speed}%
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-
-          {/* HMS alerts — only known codes are shown */}
-          {isConnected && d.hms && d.hms.length > 0 && (() => {
-            const alerts = d.hms.map((h) => decodeHMS(h.attr, h.code)).filter(Boolean);
-            if (alerts.length === 0) return null;
-            return (
-              <div className="hms-alerts">
-                {alerts.map((alert) => (
-                  <div key={alert!.key} className={`hms-alert ${alert!.severity}`}>
-                    <span className="hms-alert-dot" />
-                    {alert!.message}
-                    <a
-                      className="hms-alert-link"
-                      href={alert!.wikiUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {alert!.key} ↗
-                    </a>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-
-          {/* Anomaly */}
-          {anomaly && (
-            <div className="anomaly-indicator">
-              <span className="anomaly-dot" />
-              {anomaly}
-            </div>
-          )}
-
-          {/* Offline state */}
-          {cardState === "offline" && (
-            <div className="card-offline">
-              <p className="card-offline-message">
-                {printer.status === "no_access_code"
-                  ? "Access code not configured"
-                  : printer.error || "Connection lost"}
-              </p>
-            </div>
-          )}
-
+      {/* Body */}
+      <div className="card-main">
+        {/* Situation line */}
+        <div className={`situation-line${cardState === "paused" || cardState === "error" ? " situation-urgent" : ""}`}>
+          <span className="situation-icon">&#x25C6;</span>
+          <span className="situation-text">{situationLine(cardState, printer)}</span>
           {isConnected && (
-            <>
-              {/* Task info */}
-              {d.subtask_name && (
-                <div className="task-row">
-                  <span className="task-name">{d.subtask_name}</span>
-                  {d.gcode_state === "RUNNING" &&
-                    d.mc_remaining_time != null && (
-                      <span className="task-time">
-                        {formatTime(d.mc_remaining_time)} remaining
-                        {d.layer_num != null && d.total_layer_num != null && (
-                          <>{" · "}layer {d.layer_num}/{d.total_layer_num}</>
-                        )}
-                        {" · "}
-                        done {(() => {
-                          const finish = new Date(Date.now() + d.mc_remaining_time * 60000);
-                          const todayMid = new Date().setHours(0, 0, 0, 0);
-                          const finishMid = new Date(finish).setHours(0, 0, 0, 0);
-                          const daysAhead = Math.floor((finishMid - todayMid) / 86400000);
-                          const time = finish.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-                          if (daysAhead === 0) return time;
-                          if (daysAhead === 1) return `tomorrow ${time}`;
-                          return `${finish.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
-                        })()}
-                      </span>
-                    )}
-                </div>
+            <span className="situation-temps">
+              {d.nozzle_temper != null && (
+                <span className="situation-temp" style={{ color: tempColor(d.nozzle_temper, "nozzle") }}>
+                  <span className="situation-temp-label">nozzle</span>
+                  {d.nozzle_temper.toFixed(0)}°
+                </span>
               )}
-
-              {/* Progress */}
-              {d.gcode_state === "RUNNING" && (
-                <div className="progress-section">
-                  <div className="progress-bar-row">
-                    <div className="progress-bar-track">
-                      <div
-                        className="progress-bar-fill"
-                        style={{ width: `${d.mc_percent || 0}%` }}
-                      />
-                    </div>
-                    <span className="progress-pct">
-                      {d.mc_percent || 0}
-                      <span className="progress-pct-unit">%</span>
-                    </span>
-                  </div>
-                </div>
+              {d.bed_temper != null && (
+                <span className="situation-temp" style={{ color: tempColor(d.bed_temper, "bed") }}>
+                  <span className="situation-temp-label">bed</span>
+                  {d.bed_temper.toFixed(0)}°
+                </span>
               )}
-            </>
+              {d.cooling_fan_speed != null && (
+                <span className="situation-temp" style={{ color: fanColor(d.cooling_fan_speed) }}>
+                  <span className="situation-temp-label">part</span>
+                  {d.cooling_fan_speed}%
+                </span>
+              )}
+              {d.big_fan1_speed != null && (
+                <span className="situation-temp" style={{ color: fanColor(d.big_fan1_speed) }}>
+                  <span className="situation-temp-label">aux</span>
+                  {d.big_fan1_speed}%
+                </span>
+              )}
+            </span>
           )}
+        </div>
 
-          {/* Camera */}
+        {/* HMS alerts — only known codes are shown */}
+        {isConnected && d.hms && d.hms.length > 0 && (() => {
+          const alerts = d.hms.map((h) => decodeHMS(h.attr, h.code)).filter(Boolean);
+          if (alerts.length === 0) return null;
+          return (
+            <div className="hms-alerts">
+              {alerts.map((alert) => (
+                <div key={alert!.key} className={`hms-alert ${alert!.severity}`}>
+                  <span className="hms-alert-dot" />
+                  {alert!.message}
+                  <a
+                    className="hms-alert-link"
+                    href={alert!.wikiUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {alert!.key} ↗
+                  </a>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* Anomaly */}
+        {anomaly && (
+          <div className="anomaly-indicator">
+            <span className="anomaly-dot" />
+            {anomaly}
+          </div>
+        )}
+
+        {/* Offline state */}
+        {cardState === "offline" && (
+          <div className="card-offline">
+            <p className="card-offline-message">
+              {printer.status === "no_access_code"
+                ? "Access code not configured"
+                : printer.error || "Connection lost"}
+            </p>
+          </div>
+        )}
+
+        {isConnected && (
+          <>
+            {/* Task info */}
+            {d.subtask_name && (
+              <div className="task-row">
+                <span className="task-name">{d.subtask_name}</span>
+                {d.gcode_state === "RUNNING" &&
+                  d.mc_remaining_time != null && (
+                    <span className="task-time">
+                      {formatTime(d.mc_remaining_time)} remaining
+                      {d.layer_num != null && d.total_layer_num != null && (
+                        <>{" · "}layer {d.layer_num}/{d.total_layer_num}</>
+                      )}
+                      {" · "}
+                      done {(() => {
+                        const finish = new Date(Date.now() + d.mc_remaining_time * 60000);
+                        const todayMid = new Date().setHours(0, 0, 0, 0);
+                        const finishMid = new Date(finish).setHours(0, 0, 0, 0);
+                        const daysAhead = Math.floor((finishMid - todayMid) / 86400000);
+                        const time = finish.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                        if (daysAhead === 0) return time;
+                        if (daysAhead === 1) return `tomorrow ${time}`;
+                        return `${finish.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+                      })()}
+                    </span>
+                  )}
+              </div>
+            )}
+
+            {/* Progress */}
+            {d.gcode_state === "RUNNING" && (
+              <div className="progress-section">
+                <div className="progress-bar-row">
+                  <div className="progress-bar-track">
+                    <div
+                      className="progress-bar-fill"
+                      style={{ width: `${d.mc_percent || 0}%` }}
+                    />
+                  </div>
+                  <span className="progress-pct">
+                    {d.mc_percent || 0}
+                    <span className="progress-pct-unit">%</span>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Inline details row: filament, speed, wifi, chamber */}
+            <div className="card-details">
+              {activeFilament && (
+                <span className="detail-item">
+                  <span className="detail-swatch" style={{ background: activeFilament.color }} />
+                  <span className="detail-value">{activeFilament.type}</span>
+                </span>
+              )}
+              {d.spd_lvl != null && (
+                <span className="detail-item">
+                  <span className="detail-label">speed</span>
+                  <span className="detail-value">
+                    {speedLabel(d.spd_lvl)}
+                    {d.spd_mag != null && <span className="detail-mag"> {d.spd_mag}%</span>}
+                  </span>
+                </span>
+              )}
+              {d.chamber_temper != null && (
+                <span className="detail-item">
+                  <span className="detail-label">chamber</span>
+                  <span className="detail-value" style={{ color: tempColor(d.chamber_temper, "chamber") }}>
+                    {d.chamber_temper.toFixed(0)}°
+                  </span>
+                </span>
+              )}
+              {d.wifi_signal && (
+                <span className="detail-item">
+                  <span className="detail-label">wifi</span>
+                  <span className="detail-value">{d.wifi_signal}</span>
+                </span>
+              )}
+            </div>
+
+            {/* AMS tray swatches — one cluster per unit with per-unit humidity */}
+            {d.ams?.ams && d.ams.ams.length > 0 && (
+              <div className="card-ams">
+                {d.ams.ams.map((unit) => {
+                  const trays = unit.tray ?? [];
+                  if (trays.length === 0 && !unit.humidity) return null;
+                  return (
+                    <span key={unit.id} className="ams-unit">
+                      <span className="ams-unit-label">
+                        {parseInt(unit.id, 10) >= 128 ? "HT" : `AMS ${parseInt(unit.id, 10) + 1}`}
+                      </span>
+                      {trays.map((tray) => {
+                        const isEmpty = !tray.tray_type;
+                        const color = isEmpty ? undefined : `#${tray.tray_color?.slice(0, 6) || "444"}`;
+                        const isActive = d.ams?.tray_now === tray.id;
+                        return (
+                          <span
+                            key={`${unit.id}-${tray.id}`}
+                            className={`ams-dot${isActive ? " active" : ""}${isEmpty ? " empty" : ""}`}
+                            title={isEmpty ? "empty" : tray.tray_type}
+                            style={color ? {
+                              background: color,
+                              boxShadow: isActive ? `0 0 6px ${color}80` : "none",
+                            } : undefined}
+                          />
+                        );
+                      })}
+                      {unit.humidity && (
+                        <span className="ams-unit-humidity">{unit.humidity}%RH</span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* External spool */}
+            {d.vir_slot && d.vir_slot.length > 0 && (
+              <div className="card-ams">
+                {d.vir_slot.filter((s) => s.tray_type && s.tray_uuid && !/^0+$/.test(s.tray_uuid)).map((slot) => {
+                  const color = `#${slot.tray_color?.slice(0, 6) || "444"}`;
+                  return (
+                    <span
+                      key={slot.id}
+                      className="ams-dot active"
+                      title={slot.tray_type}
+                      style={{ background: color, boxShadow: `0 0 6px ${color}80` }}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Camera */}
+        {!hideCamera && (
           <div className="camera-section">
             {cameraFrame ? (
               <>
@@ -440,191 +494,6 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
               </>
             ) : (
               <div className="camera-placeholder">no feed</div>
-            )}
-          </div>
-        </div>
-
-        {/* Right sidebar: temps, filament, fans, AMS — collapsed by default */}
-        {isConnected && sidebarOpen && (
-          <div className="card-sidebar">
-            {/* Temperatures */}
-            <div className="sidebar-block">
-              <div className="sidebar-label">Nozzle</div>
-              <div className="sidebar-value" style={d.nozzle_temper != null ? { color: tempColor(d.nozzle_temper, "nozzle") } : undefined}>
-                {d.nozzle_temper != null ? `${d.nozzle_temper.toFixed(0)}°C` : "--"}
-              </div>
-              {d.nozzle_target_temper != null && d.nozzle_target_temper > 0 && (
-                <div className="sidebar-target">→ {d.nozzle_target_temper}°C</div>
-              )}
-            </div>
-
-            <div className="sidebar-block">
-              <div className="sidebar-label">Bed</div>
-              <div className="sidebar-value" style={d.bed_temper != null ? { color: tempColor(d.bed_temper, "bed") } : undefined}>
-                {d.bed_temper != null ? `${d.bed_temper.toFixed(0)}°C` : "--"}
-              </div>
-              {d.bed_target_temper != null && d.bed_target_temper > 0 && (
-                <div className="sidebar-target">→ {d.bed_target_temper}°C</div>
-              )}
-            </div>
-
-            {d.chamber_temper != null && (
-              <div className="sidebar-block">
-                <div className="sidebar-label">Chamber</div>
-                <div className="sidebar-value" style={{ color: tempColor(d.chamber_temper, "chamber") }}>
-                  {d.chamber_temper.toFixed(0)}°C
-                </div>
-              </div>
-            )}
-
-            {/* Active filament */}
-            {activeFilament && (
-              <div className="sidebar-block">
-                <div className="sidebar-label">Filament</div>
-                <div className="sidebar-filament">
-                  <span
-                    className="sidebar-filament-swatch"
-                    style={{ background: activeFilament.color }}
-                  />
-                  <span className="sidebar-filament-type">
-                    {activeFilament.type}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Speed + Fans */}
-            <div className="sidebar-block">
-              <div className="sidebar-label">Speed</div>
-              <div className="sidebar-value">
-                {speedLabel(d.spd_lvl)}
-                {d.spd_mag != null && (
-                  <span className="sidebar-mag"> {d.spd_mag}%</span>
-                )}
-              </div>
-            </div>
-
-            <div className="sidebar-block">
-              <div className="sidebar-label">Part Fan</div>
-              <div className="sidebar-value" style={{ color: fanColor(d.cooling_fan_speed) }}>
-                {d.cooling_fan_speed || "--"}%
-              </div>
-            </div>
-
-            <div className="sidebar-block">
-              <div className="sidebar-label">Aux Fan</div>
-              <div className="sidebar-value" style={{ color: fanColor(d.big_fan1_speed) }}>
-                {d.big_fan1_speed || "--"}%
-              </div>
-            </div>
-
-            {/* Chamber light */}
-            {d.lights_report && d.lights_report.length > 0 && (() => {
-              const light = d.lights_report.find((l) => l.node === "chamber_light");
-              if (!light) return null;
-              const on = light.mode === "on";
-              return (
-                <div className="sidebar-block">
-                  <div className="sidebar-label">Chamber Light</div>
-                  <div className={`sidebar-light${on ? " on" : ""}`}>
-                    <span className="sidebar-light-dot" />
-                    {on ? "On" : "Off"}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* AI Detection */}
-            {d.xcam && (d.xcam.first_layer_inspector != null || d.xcam.spaghetti_detector != null) && (
-              <div className="sidebar-block">
-                <div className="sidebar-label">AI Detection</div>
-                <div className="sidebar-xcam">
-                  {d.xcam.first_layer_inspector != null && (
-                    <div className={`xcam-flag${d.xcam.first_layer_inspector ? " active" : ""}`}>
-                      <span className="xcam-dot" />
-                      First Layer
-                    </div>
-                  )}
-                  {d.xcam.spaghetti_detector != null && (
-                    <div className={`xcam-flag${d.xcam.spaghetti_detector ? " active" : ""}`}>
-                      <span className="xcam-dot" />
-                      Spaghetti
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* AMS (full) */}
-            {d.ams?.ams && d.ams.ams.length > 0 && (
-              <div className="sidebar-block sidebar-ams">
-                <div className="sidebar-label">
-                  AMS
-                  {d.ams.ams.map((unit) => unit.humidity).filter(Boolean).length > 0 && (
-                    <span className="ams-humidity">
-                      {d.ams.ams.map((unit, i) =>
-                        unit.humidity ? (
-                          <span key={i}>{unit.humidity}%RH</span>
-                        ) : null
-                      )}
-                    </span>
-                  )}
-                </div>
-                <div className="sidebar-trays">
-                  {d.ams.ams.flatMap(
-                    (unit) =>
-                      unit.tray?.map((tray) => {
-                        const color = `#${tray.tray_color?.slice(0, 6) || "444"}`;
-                        const isActive = d.ams?.tray_now === tray.id;
-                        return (
-                          <div
-                            key={`${unit.id}-${tray.id}`}
-                            className={`sidebar-tray${isActive ? " active" : ""}`}
-                          >
-                            <span
-                              className="tray-swatch"
-                              style={{
-                                background: color,
-                                boxShadow: isActive
-                                  ? `0 0 6px ${color}40`
-                                  : "none",
-                              }}
-                            />
-                            <span className="sidebar-tray-type">
-                              {tray.tray_type}
-                            </span>
-                          </div>
-                        );
-                      }) || []
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* AMS Lite / external spool */}
-            {d.vir_slot && d.vir_slot.length > 0 && (
-              <div className="sidebar-block sidebar-ams">
-                <div className="sidebar-label">External</div>
-                <div className="sidebar-trays">
-                  {d.vir_slot.map((slot) => {
-                    const color = `#${slot.tray_color?.slice(0, 6) || "444"}`;
-                    return (
-                      <div key={slot.id} className="sidebar-tray active">
-                        <span
-                          className="tray-swatch"
-                          style={{
-                            background: color,
-                            boxShadow: `0 0 6px ${color}40`,
-                          }}
-                        />
-                        <span className="sidebar-tray-type">
-                          {slot.tray_type}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
             )}
           </div>
         )}
