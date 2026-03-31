@@ -795,6 +795,20 @@ body {
   min-width: 0;
 }
 
+.situation-urgent {
+  color: var(--amber);
+}
+
+.situation-urgent .situation-icon {
+  opacity: 1;
+  animation: slow-pulse 1s ease-in-out infinite;
+}
+
+.situation-urgent .situation-text {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
 .situation-temps {
   display: flex;
   align-items: center;
