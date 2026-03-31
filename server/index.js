@@ -5,6 +5,7 @@ import tls from "tls";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { initDb, startPrintJob, finishPrintJob } from "./db.js";
 
 // ---- Paths ----
 const HOME = process.env.HOME || os.homedir();
@@ -69,6 +70,38 @@ fs.watchFile(URL_TXT, { interval: 1000 }, () => {
 // ---- State ----
 const printerStates = new Map();
 const cameraProcesses = new Map(); // printerId → {proc, ws}
+const activeJobs = new Map();      // printerId → { jobId, gcodeState }
+
+// ---- Database ----
+initDb(PRINTERS);
+
+// Extract active filament type+color from merged printer data (mirrors frontend logic)
+function getActiveFilamentInfo(data) {
+  const trayNow = data.ams?.tray_now;
+  if (data.ams?.ams && trayNow != null) {
+    const idx = parseInt(trayNow, 10);
+    for (const unit of data.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (tray.id === trayNow || unit.id === trayNow) {
+          return { type: tray.tray_type, color: tray.tray_color?.slice(0, 6) };
+        }
+      }
+      // counter-based fallback
+      if (!isNaN(idx)) {
+        let counter = 0;
+        for (const t of unit.tray) {
+          if (counter++ === idx) return { type: t.tray_type, color: t.tray_color?.slice(0, 6) };
+        }
+      }
+    }
+  }
+  if (data.vir_slot?.length) {
+    const s = data.vir_slot[0];
+    if (s.tray_type) return { type: s.tray_type, color: s.tray_color?.slice(0, 6) };
+  }
+  return null;
+}
 
 // ---- WebSocket server ----
 const wss = new WebSocketServer({ port: 3001 });
@@ -190,6 +223,28 @@ for (const printer of PRINTERS) {
         data: payload.print,
         timestamp: Date.now(),
       });
+
+      // ---- Job tracking ----
+      const prevState = existingData.gcode_state;
+      const currState = mergedData.gcode_state;
+      if (currState && currState !== prevState) {
+        const job = activeJobs.get(printer.id);
+        if (currState === "RUNNING" && prevState !== "RUNNING") {
+          startPrintJob(printer.id, mergedData.subtask_name, mergedData.gcode_file)
+            .then((jobId) => {
+              if (jobId) activeJobs.set(printer.id, { jobId });
+            });
+        } else if ((currState === "FINISH" || currState === "FAILED") && job) {
+          const filament = getActiveFilamentInfo(mergedData);
+          finishPrintJob(
+            job.jobId,
+            currState === "FINISH" ? "finished" : "failed",
+            mergedData.total_layer_num,
+            filament?.type,
+            filament?.color
+          ).then(() => activeJobs.delete(printer.id));
+        }
+      }
     } catch {
       // ignore
     }
