@@ -17,11 +17,10 @@ let available = false;
 export async function initDb(printers) {
   try {
     await pool.query("SELECT 1");
-    const sql = fs.readFileSync(
-      path.join(process.cwd(), "server/migrations/001_init.sql"),
-      "utf8"
-    );
-    await pool.query(sql);
+    for (const file of ["001_init.sql", "002_alerts.sql"]) {
+      const sql = fs.readFileSync(path.join(process.cwd(), "server/migrations", file), "utf8");
+      await pool.query(sql);
+    }
     await seedPrinters(printers);
     available = true;
     console.log("Database ready");
@@ -68,6 +67,41 @@ export async function finishPrintJob(jobId, status, totalLayers, filamentType, f
     );
   } catch (err) {
     console.error(`DB finishPrintJob: ${err.message}`);
+  }
+}
+
+export async function startAlert(printerId, alertType) {
+  if (!available) return;
+  try {
+    await pool.query(
+      `INSERT INTO printer_alerts (printer_id, alert_type)
+       VALUES ($1, $2)
+       ON CONFLICT (printer_id) DO UPDATE
+         SET alert_type=$2, started_at=NOW()`,
+      [printerId, alertType]
+    );
+  } catch (err) {
+    console.error(`DB startAlert: ${err.message}`);
+  }
+}
+
+export async function resolveAlert(printerId) {
+  if (!available) return;
+  try {
+    await pool.query(`DELETE FROM printer_alerts WHERE printer_id=$1`, [printerId]);
+  } catch (err) {
+    console.error(`DB resolveAlert: ${err.message}`);
+  }
+}
+
+export async function getActiveAlerts() {
+  if (!available) return [];
+  try {
+    const result = await pool.query(`SELECT printer_id, alert_type, started_at FROM printer_alerts`);
+    return result.rows;
+  } catch (err) {
+    console.error(`DB getActiveAlerts: ${err.message}`);
+    return [];
   }
 }
 

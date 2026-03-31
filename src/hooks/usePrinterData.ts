@@ -10,6 +10,7 @@ export interface PrinterInfo {
   error?: string;
   data: PrinterData | null;
   lastUpdate?: number;
+  alertStartedAt?: number | null;
 }
 
 export interface PrinterData {

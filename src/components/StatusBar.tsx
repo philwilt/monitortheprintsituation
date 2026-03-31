@@ -10,35 +10,33 @@ type SystemMood = "nominal" | "degraded" | "critical";
 function getSystemMood(printers: Map<string, PrinterInfo>): SystemMood {
   if (printers.size === 0) return "nominal";
   let hasError = false;
-  let hasWarning = false;
+  let hasPaused = false;
+  let hasOffline = false;
   for (const p of printers.values()) {
-    if (p.status !== "connected") {
-      hasWarning = true;
-      continue;
-    }
+    if (p.status !== "connected") { hasOffline = true; continue; }
     const state = p.data?.gcode_state;
     if (state === "FAILED") hasError = true;
-    if (state === "PAUSE") hasWarning = true;
+    if (state === "PAUSE") hasPaused = true;
   }
-  if (hasError) return "critical";
-  if (hasWarning) return "degraded";
+  if (hasError || hasPaused) return "critical";
+  if (hasOffline) return "degraded";
   return "nominal";
 }
 
-function getSystemLabel(mood: SystemMood): string {
-  switch (mood) {
-    case "nominal":
-      return "All systems nominal";
-    case "degraded":
-      return "Slight irregularity detected";
-    case "critical":
-      return "Attention required";
+function getSystemLabel(printers: Map<string, PrinterInfo>, mood: SystemMood): string {
+  if (mood === "nominal") return "All systems nominal";
+  if (mood === "degraded") return "Signal degraded";
+  // critical — find what's wrong
+  for (const p of printers.values()) {
+    if (p.data?.gcode_state === "FAILED") return "Print failure — intervention required";
+    if (p.data?.gcode_state === "PAUSE") return `${p.name} — waiting for operator`;
   }
+  return "Attention required";
 }
 
 export function StatusBar({ printers, connected }: Props) {
   const mood = getSystemMood(printers);
-  const label = getSystemLabel(mood);
+  const label = getSystemLabel(printers, mood);
 
   const total = printers.size;
   let active = 0;
@@ -81,7 +79,7 @@ export function StatusBar({ printers, connected }: Props) {
             <span>anomalies</span>
             <span
               className="status-bar-metric-value"
-              style={{ color: "var(--amber)" }}
+              style={{ color: mood === "critical" ? "#f05050" : "var(--amber)" }}
             >
               {anomalies}
             </span>

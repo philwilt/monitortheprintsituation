@@ -1,6 +1,25 @@
-import { memo } from "react";
+import { memo, useState, useEffect } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 import { decodeHMS } from "../utils/hms";
+
+function useElapsedTime(startedAt: number | null | undefined): string | null {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!startedAt) return;
+    const id = setInterval(() => setTick((t) => t + 1), 10000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  if (!startedAt) return null;
+  const secs = Math.floor((Date.now() - startedAt) / 1000);
+  if (secs < 60) return "< 1m";
+  const mins = Math.floor(secs / 60);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
 interface Props {
   printer: PrinterInfo;
@@ -239,6 +258,9 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
     printer.status === "connected" ? detectAnomaly(printer) : null;
   const activeFilament =
     printer.status === "connected" ? getActiveFilament(printer) : null;
+  const elapsed = useElapsedTime(
+    (cardState === "paused" || cardState === "error") ? printer.alertStartedAt : null
+  );
 
   const cardClass = [
     "printer-card",
@@ -266,6 +288,7 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
         <div className="card-status-area">
           <span className={`state-tag ${cardState}`}>
             {stateLabel(cardState)}
+            {elapsed && <span className="state-tag-elapsed"> · {elapsed}</span>}
           </span>
         </div>
       </div>

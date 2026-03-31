@@ -5,7 +5,7 @@ import tls from "tls";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { initDb, startPrintJob, finishPrintJob } from "./db.js";
+import { initDb, startPrintJob, finishPrintJob, startAlert, resolveAlert, getActiveAlerts } from "./db.js";
 
 // ---- Paths ----
 const HOME = process.env.HOME || os.homedir();
@@ -73,7 +73,14 @@ const cameraProcesses = new Map(); // printerId → {proc, ws}
 const activeJobs = new Map();      // printerId → { jobId, gcodeState }
 
 // ---- Database ----
-initDb(PRINTERS);
+// alertStartedAt map: printerId → ms timestamp (in-memory mirror of DB)
+const alertStartedAtMap = new Map();
+initDb(PRINTERS).then(async () => {
+  const alerts = await getActiveAlerts();
+  for (const { printer_id, started_at } of alerts) {
+    alertStartedAtMap.set(printer_id, new Date(started_at).getTime());
+  }
+});
 
 // Extract active filament type+color from merged printer data (mirrors frontend logic)
 function getActiveFilamentInfo(data) {
@@ -224,7 +231,7 @@ for (const printer of PRINTERS) {
         timestamp: Date.now(),
       });
 
-      // ---- Job tracking ----
+      // ---- Job + alert tracking ----
       const prevState = existingData.gcode_state;
       const currState = mergedData.gcode_state;
       if (currState && currState !== prevState) {
@@ -243,6 +250,20 @@ for (const printer of PRINTERS) {
             filament?.type,
             filament?.color
           ).then(() => activeJobs.delete(printer.id));
+        }
+
+        // Alert lifecycle: PAUSE or FAILED → start; anything else → resolve
+        if (currState === "PAUSE" || currState === "FAILED") {
+          const now = Date.now();
+          alertStartedAtMap.set(printer.id, now);
+          startAlert(printer.id, currState);
+          const s = printerStates.get(printer.id);
+          if (s) broadcast({ type: "printer_status", printer: printer.id, state: { ...s, alertStartedAt: now } });
+        } else {
+          alertStartedAtMap.delete(printer.id);
+          resolveAlert(printer.id);
+          const s = printerStates.get(printer.id);
+          if (s) broadcast({ type: "printer_status", printer: printer.id, state: { ...s, alertStartedAt: null } });
         }
       }
     } catch {
@@ -465,7 +486,8 @@ for (const printer of PRINTERS) {
 // ---- WebSocket connection handler ----
 wss.on("connection", (ws) => {
   for (const [id, state] of printerStates) {
-    ws.send(JSON.stringify({ type: "printer_status", printer: id, state }));
+    const alertStartedAt = alertStartedAtMap.get(id) ?? null;
+    ws.send(JSON.stringify({ type: "printer_status", printer: id, state: { ...state, alertStartedAt } }));
   }
 });
 
