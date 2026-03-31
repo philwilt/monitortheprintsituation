@@ -339,28 +339,29 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
             )}
           </div>
 
-          {/* HMS alerts */}
-          {isConnected && d.hms && d.hms.length > 0 && (
-            <div className="hms-alerts">
-              {d.hms.map((h) => {
-                const alert = decodeHMS(h.attr, h.code);
-                return (
-                  <div key={alert.key} className={`hms-alert ${alert.severity}`}>
+          {/* HMS alerts — only known codes are shown */}
+          {isConnected && d.hms && d.hms.length > 0 && (() => {
+            const alerts = d.hms.map((h) => decodeHMS(h.attr, h.code)).filter(Boolean);
+            if (alerts.length === 0) return null;
+            return (
+              <div className="hms-alerts">
+                {alerts.map((alert) => (
+                  <div key={alert!.key} className={`hms-alert ${alert!.severity}`}>
                     <span className="hms-alert-dot" />
-                    {alert.message}
+                    {alert!.message}
                     <a
                       className="hms-alert-link"
-                      href={alert.wikiUrl}
+                      href={alert!.wikiUrl}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      {alert.key} ↗
+                      {alert!.key} ↗
                     </a>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Anomaly */}
           {anomaly && (

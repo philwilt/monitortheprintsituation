@@ -32,15 +32,16 @@ const HMS_MESSAGES: Record<string, { message: string; severity: "error" | "warni
   "0500-0100-0002-0001": { message: "Media pipeline malfunction", severity: "warning" },
 };
 
-export function decodeHMS(attr: number, code: number): HMSAlert {
+export function decodeHMS(attr: number, code: number): HMSAlert | null {
   const a = attr.toString(16).padStart(8, "0").toUpperCase();
   const c = code.toString(16).padStart(8, "0").toUpperCase();
   const key = `${a.slice(0, 4)}-${a.slice(4)}-${c.slice(0, 4)}-${c.slice(4)}`;
   const known = HMS_MESSAGES[key];
+  if (!known) return null; // unknown codes are informational — don't surface them
   return {
     key,
-    message: known?.message ?? "Hardware alert",
-    severity: known?.severity ?? "error",
+    message: known.message,
+    severity: known.severity,
     wikiUrl: `https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/HMS_${a}_${c}`,
   };
 }

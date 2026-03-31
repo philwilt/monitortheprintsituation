@@ -28,7 +28,7 @@ export function useAlerts(printers: Map<string, PrinterInfo>) {
       for (const h of currHms) {
         if (!prevKeys.has(`${h.attr}-${h.code}`)) {
           const decoded = decodeHMS(h.attr, h.code);
-          notify(printer.name, decoded.message);
+          if (decoded) notify(printer.name, decoded.message);
         }
       }
 
