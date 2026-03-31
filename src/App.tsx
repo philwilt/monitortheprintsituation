@@ -1,4 +1,5 @@
 import { usePrinterData } from "./hooks/usePrinterData";
+import { useAlerts } from "./hooks/useAlerts";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
 import { HeroBanner } from "./components/HeroBanner";
 import { PrinterCard } from "./components/PrinterCard";
@@ -6,6 +7,7 @@ import "./App.css";
 
 function App() {
   const { printers, cameraFrames, connected } = usePrinterData();
+  useAlerts(printers);
   const mood = getSystemMood(printers);
 
   const timestamp = new Date().toLocaleDateString("en-US", {

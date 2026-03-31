@@ -1,5 +1,6 @@
 import { useState, memo } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
+import { decodeHMS } from "../utils/hms";
 
 interface Props {
   printer: PrinterInfo;
@@ -337,6 +338,29 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame }: P
               </span>
             )}
           </div>
+
+          {/* HMS alerts */}
+          {isConnected && d.hms && d.hms.length > 0 && (
+            <div className="hms-alerts">
+              {d.hms.map((h) => {
+                const alert = decodeHMS(h.attr, h.code);
+                return (
+                  <div key={alert.key} className={`hms-alert ${alert.severity}`}>
+                    <span className="hms-alert-dot" />
+                    {alert.message}
+                    <a
+                      className="hms-alert-link"
+                      href={alert.wikiUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {alert.key} ↗
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Anomaly */}
           {anomaly && (

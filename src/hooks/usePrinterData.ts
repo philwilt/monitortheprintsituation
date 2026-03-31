@@ -58,6 +58,7 @@ export interface PrinterData {
     first_layer_inspector?: boolean;
     spaghetti_detector?: boolean;
   };
+  hms?: Array<{ attr: number; code: number }>;
 }
 
 interface WSMessage {
