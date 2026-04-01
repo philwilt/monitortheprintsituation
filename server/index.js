@@ -85,26 +85,37 @@ initDb(PRINTERS).then(async () => {
 // Extract active filament type+color from merged printer data (mirrors frontend logic)
 function getActiveFilamentInfo(data) {
   const trayNow = data.ams?.tray_now;
-  if (data.ams?.ams && trayNow != null) {
+  if (data.ams?.ams && trayNow != null && !isNaN(parseInt(trayNow, 10)) && parseInt(trayNow, 10) < 254) {
     const idx = parseInt(trayNow, 10);
+    // Strategy 1: direct tray ID match, skip empty trays
     for (const unit of data.ams.ams) {
       if (!unit.tray) continue;
       for (const tray of unit.tray) {
-        if (tray.id === trayNow || unit.id === trayNow) {
+        if (tray.id === trayNow && tray.tray_type) {
           return { type: tray.tray_type, color: tray.tray_color?.slice(0, 6) };
         }
       }
-      // counter-based fallback
-      if (!isNaN(idx)) {
-        let counter = 0;
-        for (const t of unit.tray) {
-          if (counter++ === idx) return { type: t.tray_type, color: t.tray_color?.slice(0, 6) };
+    }
+    // Strategy 2: global counter across all units
+    let counter = 0;
+    for (const unit of data.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (counter++ === idx && tray.tray_type) {
+          return { type: tray.tray_type, color: tray.tray_color?.slice(0, 6) };
         }
+      }
+    }
+    // Strategy 3: unit id matches tray_now (AMS HT)
+    for (const unit of data.ams.ams) {
+      if (unit.id === trayNow && unit.tray) {
+        const tray = unit.tray.find((t) => t.tray_type);
+        if (tray) return { type: tray.tray_type, color: tray.tray_color?.slice(0, 6) };
       }
     }
   }
   if (data.vir_slot?.length) {
-    const s = data.vir_slot[0];
+    const s = data.vir_slot.find((v) => v.tray_type) ?? data.vir_slot[0];
     if (s.tray_type) return { type: s.tray_type, color: s.tray_color?.slice(0, 6) };
   }
   return null;
@@ -257,13 +268,11 @@ for (const printer of PRINTERS) {
           const now = Date.now();
           alertStartedAtMap.set(printer.id, now);
           startAlert(printer.id, currState);
-          const s = printerStates.get(printer.id);
-          if (s) broadcast({ type: "printer_status", printer: printer.id, state: { ...s, alertStartedAt: now } });
+          broadcast({ type: "printer_status", printer: printer.id, state: { ...merged, alertStartedAt: now } });
         } else {
           alertStartedAtMap.delete(printer.id);
           resolveAlert(printer.id);
-          const s = printerStates.get(printer.id);
-          if (s) broadcast({ type: "printer_status", printer: printer.id, state: { ...s, alertStartedAt: null } });
+          broadcast({ type: "printer_status", printer: printer.id, state: { ...merged, alertStartedAt: null } });
         }
       }
     } catch {

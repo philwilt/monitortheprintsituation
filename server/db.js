@@ -30,15 +30,15 @@ export async function initDb(printers) {
 }
 
 async function seedPrinters(printers) {
-  for (const p of printers) {
-    await pool.query(
+  await Promise.all(printers.map((p) =>
+    pool.query(
       `INSERT INTO printers (id, name, ip, serial, model, camera_mode)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (id) DO UPDATE
          SET name=$2, ip=$3, serial=$4, model=$5, camera_mode=$6`,
       [p.id, p.name, p.ip, p.serial, p.model || null, p.cameraMode || null]
-    );
-  }
+    )
+  ));
 }
 
 export async function startPrintJob(printerId, subtaskName, gcodeFile) {

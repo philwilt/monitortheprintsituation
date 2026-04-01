@@ -109,7 +109,8 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
       if (msg.type === "printer_status" && msg.state) {
         setPrinters((prev) => {
           const next = new Map(prev);
-          next.set(msg.printer, msg.state!);
+          const existing = prev.get(msg.printer);
+          next.set(msg.printer, existing ? { ...existing, ...msg.state! } : msg.state!);
           return next;
         });
       }

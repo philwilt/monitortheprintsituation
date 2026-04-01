@@ -61,9 +61,33 @@ npm run lint         # eslint
 
 The server broadcasts three message types to all connected frontend clients:
 
-- `printer_status` — full `PrinterInfo` snapshot (on connect and on MQTT connect/error)
+- `printer_status` — full `PrinterInfo` snapshot (on connect, MQTT connect/error, and alert transitions). Frontend merges these into existing state rather than replacing.
 - `printer_data` — partial `PrinterData` patch from MQTT message
 - `camera_frame` — base64-encoded JPEG frame
+
+## Alert system
+
+When a printer enters `PAUSE` or `FAILED`, the server:
+1. Records the timestamp in `printer_alerts` DB table (survives restarts)
+2. Sets `alertStartedAt` (ms epoch) in the printer state and broadcasts it
+3. Clears it when the printer leaves the alert state
+
+The frontend uses `alertStartedAt` to show elapsed time in the card header.
+
+## AMS / filament detection
+
+Bambu printers report `tray_now` as a slot index. With AMS + AMS HT (unit id=128) present:
+- The firmware reports `tray_now=0` even when the HT is active (firmware quirk)
+- `getActiveFilament` (frontend) and `getActiveFilamentInfo` (server) use three strategies to resolve the correct tray, skipping empty trays so a loaded HT tray wins over an empty regular AMS slot with the same id
+- Keep both implementations in sync when modifying filament detection logic
+
+## Database
+
+PostgreSQL via Docker Compose. Schema in `server/migrations/` (runs `IF NOT EXISTS` on every startup).
+
+```bash
+npm run db   # start postgres + adminer (http://localhost:8080)
+```
 
 ## Notes
 

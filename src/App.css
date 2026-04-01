@@ -30,6 +30,14 @@
   --red-glow: rgba(155, 74, 74, 0.08);
   --red-surface: rgba(155, 74, 74, 0.04);
 
+  --red-alert: #dc3b3b;
+  --red-alert-bright: #f05050;
+  --red-alert-glow: rgba(220, 59, 59, 0.5);
+  --red-alert-glow-wide: rgba(220, 59, 59, 0.2);
+  --red-alert-surface: rgba(200, 50, 50, 0.1);
+  --red-alert-border: rgba(200, 50, 50, 0.25);
+  --red-alert-bg: var(--red-alert-bg);
+
   --blue: #4a6a9b;
   --blue-muted: #3d5880;
 
@@ -114,7 +122,7 @@ body {
 .app[data-mood="critical"]::before {
   background: radial-gradient(
     ellipse at 50% 0%,
-    rgba(200, 40, 40, 0.07) 0%,
+    var(--red-alert-bg) 0%,
     transparent 70%
   );
 }
@@ -287,13 +295,13 @@ body {
 }
 
 .system-state-indicator.critical {
-  background: #dc3b3b;
-  box-shadow: 0 0 10px rgba(220, 59, 59, 0.5), 0 0 20px rgba(220, 59, 59, 0.2);
+  background: var(--red-alert);
+  box-shadow: 0 0 10px var(--red-alert-glow), 0 0 20px var(--red-alert-glow-wide);
   animation: critical-flash 1.2s ease-in-out infinite;
 }
 
 @keyframes critical-flash {
-  0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(220, 59, 59, 0.5), 0 0 20px rgba(220, 59, 59, 0.2); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 10px var(--red-alert-glow), 0 0 20px var(--red-alert-glow-wide); }
   50%       { opacity: 0.5; box-shadow: 0 0 4px rgba(220, 59, 59, 0.3); }
 }
 
@@ -307,7 +315,7 @@ body {
 }
 
 [data-mood="critical"] .system-state-label {
-  color: #f05050;
+  color: var(--red-alert-bright);
   font-weight: 600;
 }
 
@@ -581,7 +589,7 @@ body {
 }
 
 .printer-card.state-paused {
-  border-color: rgba(200, 50, 50, 0.25);
+  border-color: var(--red-alert-border);
   box-shadow: 0 0 0 1px rgba(200, 50, 50, 0.08), inset 0 0 40px rgba(200, 50, 50, 0.03);
   animation: alert-border-pulse 2s ease-in-out infinite;
 }
@@ -645,12 +653,12 @@ body {
 }
 
 .heartbeat-container.paused .heartbeat-dot {
-  background: #dc3b3b;
-  box-shadow: 0 0 6px rgba(220, 59, 59, 0.6);
+  background: var(--red-alert);
+  box-shadow: 0 0 6px var(--red-alert-glow);
 }
 
 .heartbeat-container.paused .heartbeat-ring {
-  border: 1.5px solid #dc3b3b;
+  border: 1.5px solid var(--red-alert);
   animation: heartbeat 1.8s ease-in-out infinite;
 }
 
@@ -721,9 +729,9 @@ body {
 }
 
 .state-tag.paused {
-  color: #f05050;
-  background: rgba(200, 50, 50, 0.1);
-  border: 1px solid rgba(200, 50, 50, 0.25);
+  color: var(--red-alert-bright);
+  background: var(--red-alert-surface);
+  border: 1px solid var(--red-alert-border);
   animation: tag-flash 2s ease-in-out infinite;
 }
 
@@ -926,7 +934,7 @@ body {
 }
 
 .state-paused .situation-urgent {
-  color: #f05050;
+  color: var(--red-alert-bright);
 }
 
 .state-error .situation-urgent {

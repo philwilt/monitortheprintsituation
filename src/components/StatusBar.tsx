@@ -6,37 +6,27 @@ interface Props {
 }
 
 type SystemMood = "nominal" | "degraded" | "critical";
+type SystemStatus = { mood: SystemMood; label: string };
 
-function getSystemMood(printers: Map<string, PrinterInfo>): SystemMood {
-  if (printers.size === 0) return "nominal";
-  let hasError = false;
-  let hasPaused = false;
+function getSystemStatus(printers: Map<string, PrinterInfo>): SystemStatus {
+  if (printers.size === 0) return { mood: "nominal", label: "All systems nominal" };
   let hasOffline = false;
   for (const p of printers.values()) {
     if (p.status !== "connected") { hasOffline = true; continue; }
     const state = p.data?.gcode_state;
-    if (state === "FAILED") hasError = true;
-    if (state === "PAUSE") hasPaused = true;
+    if (state === "FAILED") return { mood: "critical", label: "Print failure — intervention required" };
+    if (state === "PAUSE") return { mood: "critical", label: `${p.name} — waiting for operator` };
   }
-  if (hasError || hasPaused) return "critical";
-  if (hasOffline) return "degraded";
-  return "nominal";
+  if (hasOffline) return { mood: "degraded", label: "Signal degraded" };
+  return { mood: "nominal", label: "All systems nominal" };
 }
 
-function getSystemLabel(printers: Map<string, PrinterInfo>, mood: SystemMood): string {
-  if (mood === "nominal") return "All systems nominal";
-  if (mood === "degraded") return "Signal degraded";
-  // critical — find what's wrong
-  for (const p of printers.values()) {
-    if (p.data?.gcode_state === "FAILED") return "Print failure — intervention required";
-    if (p.data?.gcode_state === "PAUSE") return `${p.name} — waiting for operator`;
-  }
-  return "Attention required";
+function getSystemMood(printers: Map<string, PrinterInfo>): SystemMood {
+  return getSystemStatus(printers).mood;
 }
 
 export function StatusBar({ printers, connected }: Props) {
-  const mood = getSystemMood(printers);
-  const label = getSystemLabel(printers, mood);
+  const { mood, label } = getSystemStatus(printers);
 
   const total = printers.size;
   let active = 0;
