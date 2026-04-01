@@ -167,14 +167,15 @@ function getActiveFilament(
   const globalIdx = trayNow != null ? parseInt(trayNow, 10) : NaN;
 
   if (d.ams?.ams && d.ams.ams.length > 0 && !isNaN(globalIdx) && globalIdx < 254) {
-    // Strategy 1: direct tray ID match (firmware sends global IDs on tray.id)
+    // Strategy 1: direct tray ID match — skip empty trays so a loaded tray
+    // with the same ID in another unit (e.g. AMS HT) wins over an empty slot
     for (const unit of d.ams.ams) {
       if (!unit.tray) continue;
       for (const tray of unit.tray) {
-        if (tray.id === trayNow) {
+        if (tray.id === trayNow && tray.tray_type) {
           return {
             color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
-            type: tray.tray_type || "Unknown",
+            type: tray.tray_type,
           };
         }
       }
@@ -184,10 +185,10 @@ function getActiveFilament(
     for (const unit of d.ams.ams) {
       if (!unit.tray) continue;
       for (const tray of unit.tray) {
-        if (counter === globalIdx) {
+        if (counter === globalIdx && tray.tray_type) {
           return {
             color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
-            type: tray.tray_type || "Unknown",
+            type: tray.tray_type,
           };
         }
         counter++;
@@ -196,12 +197,14 @@ function getActiveFilament(
     // Strategy 3: AMS HT / non-sequential units — tray_now matches the unit's own id
     // (e.g. AMS HT reports unit id="128", tray_now="128")
     for (const unit of d.ams.ams) {
-      if (unit.id === trayNow && unit.tray && unit.tray.length > 0) {
-        const tray = unit.tray[0];
-        return {
-          color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
-          type: tray.tray_type || "Unknown",
-        };
+      if (unit.id === trayNow && unit.tray) {
+        const tray = unit.tray.find((t) => t.tray_type);
+        if (tray) {
+          return {
+            color: `#${tray.tray_color?.slice(0, 6) || "888"}`,
+            type: tray.tray_type,
+          };
+        }
       }
     }
   }
