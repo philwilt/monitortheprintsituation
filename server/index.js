@@ -5,7 +5,14 @@ import tls from "tls";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { initDb, startPrintJob, finishPrintJob, startAlert, resolveAlert, getActiveAlerts } from "./db.js";
+import express from "express";
+import multer from "multer";
+import { Client as FtpClient } from "basic-ftp";
+import {
+  initDb, startPrintJob, finishPrintJob, startAlert, resolveAlert, getActiveAlerts,
+  getFilaments, createFilament, updateFilament, deleteFilament,
+  getProfiles, createProfile, updateProfile, deleteProfile,
+} from "./db.js";
 
 // ---- Paths ----
 const HOME = process.env.HOME || os.homedir();
@@ -120,6 +127,108 @@ function getActiveFilamentInfo(data) {
   }
   return null;
 }
+
+// ---- FTP helpers ----
+async function ftpConnect(printer) {
+  const client = new FtpClient();
+  client.ftp.verbose = false;
+  await client.access({
+    host: printer.ip,
+    port: 990,
+    user: "bblp",
+    password: printer.accessCode,
+    secure: true,
+    secureOptions: { rejectUnauthorized: false },
+  });
+  return client;
+}
+
+async function ftpListDir(printer, dirPath) {
+  const client = await ftpConnect(printer);
+  try {
+    const list = await client.list(dirPath);
+    return list.map((f) => ({
+      name: f.name,
+      type: f.type,
+      size: f.size,
+      modifiedAt: f.modifiedAt?.toISOString() ?? null,
+    }));
+  } finally {
+    client.close();
+  }
+}
+
+// ---- HTTP API server (Express, port 3002) ----
+const UPLOADS_DIR = path.join(process.cwd(), "server/uploads");
+const upload = multer({ dest: UPLOADS_DIR });
+
+const app = express();
+app.use(express.json());
+app.use("/uploads", express.static(UPLOADS_DIR));
+
+// FTP download
+app.get("/ftp/download", async (req, res) => {
+  const { printer: printerId, path: filePath } = req.query;
+  if (!printerId || !filePath) return res.status(400).send("Missing params");
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return res.status(404).send("Printer not found");
+  const client = new FtpClient();
+  try {
+    await client.access({ host: printer.ip, port: 990, user: "bblp", password: printer.accessCode, secure: true, secureOptions: { rejectUnauthorized: false } });
+    const filename = String(filePath).split("/").filter(Boolean).pop() || "download";
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Type", "application/octet-stream");
+    await client.downloadTo(res, String(filePath));
+  } catch (err) {
+    if (!res.headersSent) res.status(502).send(err.message);
+  } finally {
+    client.close();
+  }
+});
+
+// Filaments
+app.get("/api/filaments", async (_req, res) => {
+  try { res.json(await getFilaments()); } catch (e) { res.status(500).send(e.message); }
+});
+app.post("/api/filaments", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body, image_path: req.file ? req.file.filename : null };
+    res.json(await createFilament(data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.put("/api/filaments/:id", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body };
+    if (req.file) data.image_path = req.file.filename;
+    res.json(await updateFilament(req.params.id, data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.delete("/api/filaments/:id", async (req, res) => {
+  try { await deleteFilament(req.params.id); res.json({ ok: true }); } catch (e) { res.status(500).send(e.message); }
+});
+
+// Calibration profiles
+app.get("/api/profiles", async (_req, res) => {
+  try { res.json(await getProfiles()); } catch (e) { res.status(500).send(e.message); }
+});
+app.post("/api/profiles", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body, image_path: req.file ? req.file.filename : null };
+    res.json(await createProfile(data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.put("/api/profiles/:id", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body };
+    if (req.file) data.image_path = req.file.filename;
+    res.json(await updateProfile(req.params.id, data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.delete("/api/profiles/:id", async (req, res) => {
+  try { await deleteProfile(req.params.id); res.json({ ok: true }); } catch (e) { res.status(500).send(e.message); }
+});
+
+app.listen(3002, "127.0.0.1");
 
 // ---- WebSocket server ----
 const wss = new WebSocketServer({ port: 3001 });
@@ -498,6 +607,24 @@ wss.on("connection", (ws) => {
     const alertStartedAt = alertStartedAtMap.get(id) ?? null;
     ws.send(JSON.stringify({ type: "printer_status", printer: id, state: { ...state, alertStartedAt } }));
   }
+
+  ws.on("message", async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    if (msg.type === "ftp_list") {
+      const printer = PRINTERS.find((p) => p.id === msg.printer);
+      if (!printer) return;
+      const dirPath = msg.path || "/";
+      ws.send(JSON.stringify({ type: "ftp_loading", printer: msg.printer, path: dirPath }));
+      try {
+        const files = await ftpListDir(printer, dirPath);
+        ws.send(JSON.stringify({ type: "ftp_listing", printer: msg.printer, path: dirPath, files }));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: "ftp_listing", printer: msg.printer, path: dirPath, files: [], error: err.message }));
+      }
+    }
+  });
 });
 
 console.log(`The Situation — ${PRINTERS.map((p) => p.name).join(", ")} — ws://localhost:3001`);

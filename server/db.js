@@ -17,7 +17,7 @@ let available = false;
 export async function initDb(printers) {
   try {
     await pool.query("SELECT 1");
-    for (const file of ["001_init.sql", "002_alerts.sql"]) {
+    for (const file of ["001_init.sql", "002_alerts.sql", "003_inventory.sql"]) {
       const sql = fs.readFileSync(path.join(process.cwd(), "server/migrations", file), "utf8");
       await pool.query(sql);
     }
@@ -103,6 +103,74 @@ export async function getActiveAlerts() {
     console.error(`DB getActiveAlerts: ${err.message}`);
     return [];
   }
+}
+
+// ---- Filaments ----
+
+export async function getFilaments() {
+  if (!available) return [];
+  const result = await pool.query(`SELECT * FROM filaments ORDER BY brand, type, color_name`);
+  return result.rows;
+}
+
+export async function createFilament({ brand, type, color_name, color_hex, diameter, quantity, image_path, notes }) {
+  const result = await pool.query(
+    `INSERT INTO filaments (brand, type, color_name, color_hex, diameter, quantity, image_path, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [brand, type, color_name || null, color_hex || null, diameter || 1.75, quantity ?? 1, image_path || null, notes || null]
+  );
+  return result.rows[0];
+}
+
+export async function updateFilament(id, { brand, type, color_name, color_hex, diameter, quantity, image_path, notes }) {
+  const result = await pool.query(
+    `UPDATE filaments SET brand=$2, type=$3, color_name=$4, color_hex=$5, diameter=$6, quantity=$7, image_path=$8, notes=$9
+     WHERE id=$1 RETURNING *`,
+    [id, brand, type, color_name || null, color_hex || null, diameter || 1.75, quantity ?? 1, image_path || null, notes || null]
+  );
+  return result.rows[0];
+}
+
+export async function deleteFilament(id) {
+  await pool.query(`DELETE FROM filaments WHERE id=$1`, [id]);
+}
+
+// ---- Calibration Profiles ----
+
+export async function getProfiles() {
+  if (!available) return [];
+  const result = await pool.query(`SELECT * FROM calibration_profiles ORDER BY brand, type, nozzle_size`);
+  return result.rows;
+}
+
+export async function createProfile({ name, brand, type, nozzle_size, nozzle_material, printer_model, nozzle_temp, bed_temp, fan_speed, flow_ratio, pressure_advance, max_volumetric_speed, image_path, notes }) {
+  const result = await pool.query(
+    `INSERT INTO calibration_profiles
+       (name, brand, type, nozzle_size, nozzle_material, printer_model, nozzle_temp, bed_temp, fan_speed, flow_ratio, pressure_advance, max_volumetric_speed, image_path, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    [name, brand, type, nozzle_size, nozzle_material || "brass", printer_model || null,
+     nozzle_temp || null, bed_temp || null, fan_speed || null, flow_ratio ?? 1.0,
+     pressure_advance || null, max_volumetric_speed || null, image_path || null, notes || null]
+  );
+  return result.rows[0];
+}
+
+export async function updateProfile(id, { name, brand, type, nozzle_size, nozzle_material, printer_model, nozzle_temp, bed_temp, fan_speed, flow_ratio, pressure_advance, max_volumetric_speed, image_path, notes }) {
+  const result = await pool.query(
+    `UPDATE calibration_profiles SET
+       name=$2, brand=$3, type=$4, nozzle_size=$5, nozzle_material=$6, printer_model=$7,
+       nozzle_temp=$8, bed_temp=$9, fan_speed=$10, flow_ratio=$11, pressure_advance=$12,
+       max_volumetric_speed=$13, image_path=$14, notes=$15
+     WHERE id=$1 RETURNING *`,
+    [id, name, brand, type, nozzle_size, nozzle_material || "brass", printer_model || null,
+     nozzle_temp || null, bed_temp || null, fan_speed || null, flow_ratio ?? 1.0,
+     pressure_advance || null, max_volumetric_speed || null, image_path || null, notes || null]
+  );
+  return result.rows[0];
+}
+
+export async function deleteProfile(id) {
+  await pool.query(`DELETE FROM calibration_profiles WHERE id=$1`, [id]);
 }
 
 export default pool;

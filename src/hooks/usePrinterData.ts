@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 export interface PrinterInfo {
   id: string;
@@ -63,6 +63,20 @@ export interface PrinterData {
   hms?: Array<{ attr: number; code: number }>;
 }
 
+export interface FtpFileInfo {
+  name: string;
+  type: number; // 1=file, 2=dir, 3=symlink
+  size: number;
+  modifiedAt: string | null;
+}
+
+export interface FtpListing {
+  path: string;
+  files: FtpFileInfo[];
+  error?: string;
+  loading: boolean;
+}
+
 interface WSMessage {
   type: string;
   printer: string;
@@ -70,11 +84,15 @@ interface WSMessage {
   data?: PrinterData;
   frame?: string;
   timestamp?: number;
+  path?: string;
+  files?: FtpFileInfo[];
+  error?: string;
 }
 
 export function usePrinterData(livePrinters: Set<string> = new Set()) {
   const [printers, setPrinters] = useState<Map<string, PrinterInfo>>(new Map());
   const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(new Map());
+  const [ftpListings, setFtpListings] = useState<Map<string, FtpListing>>(new Map());
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -110,7 +128,13 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
         setPrinters((prev) => {
           const next = new Map(prev);
           const existing = prev.get(msg.printer);
-          next.set(msg.printer, existing ? { ...existing, ...msg.state! } : msg.state!);
+          const merged = existing ? { ...existing, ...msg.state! } : msg.state!;
+          // Preserve existing data if incoming is null (MQTT reconnect — pushall
+          // response hasn't arrived yet and we don't want to blank the card)
+          if (existing?.data && msg.state!.data === null) {
+            merged.data = existing.data;
+          }
+          next.set(msg.printer, merged);
           return next;
         });
       }
@@ -154,6 +178,22 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
         }
       }
 
+      if (msg.type === "ftp_loading") {
+        setFtpListings((prev) => {
+          const next = new Map(prev);
+          next.set(msg.printer, { path: msg.path!, files: [], loading: true });
+          return next;
+        });
+      }
+
+      if (msg.type === "ftp_listing") {
+        setFtpListings((prev) => {
+          const next = new Map(prev);
+          next.set(msg.printer, { path: msg.path!, files: msg.files ?? [], error: msg.error, loading: false });
+          return next;
+        });
+      }
+
       if (msg.type === "camera_frame" && msg.frame) {
         // Skip frame if in snapshot mode and not enough time has passed
         const isLive = frameIntervalRef.current.has(msg.printer);
@@ -174,13 +214,17 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
         if (frameRafRef.current === undefined) {
           frameRafRef.current = requestAnimationFrame(() => {
             frameRafRef.current = undefined;
-            // Revoke previous live blob URLs before replacing them
-            for (const [id, oldUrl] of blobUrlsRef.current) {
-              if (pendingFramesRef.current.has(id)) URL.revokeObjectURL(oldUrl);
-            }
             const next = new Map(pendingFramesRef.current);
+            // Collect old URLs to revoke, but defer until after React paints the new srcs
+            const toRevoke: string[] = [];
+            for (const [id, oldUrl] of blobUrlsRef.current) {
+              if (next.has(id)) toRevoke.push(oldUrl);
+            }
             for (const [id, url] of next) blobUrlsRef.current.set(id, url);
             setCameraFrames(next);
+            requestAnimationFrame(() => {
+              for (const url of toRevoke) URL.revokeObjectURL(url);
+            });
           });
         }
       }
@@ -208,5 +252,11 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
     };
   }, [connect]);
 
-  return { printers, cameraFrames, connected };
+  const sendMessage = useMemo(() => (msg: object) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
+
+  return { printers, cameraFrames, connected, ftpListings, sendMessage };
 }

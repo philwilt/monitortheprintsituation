@@ -7,5 +7,10 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
+    proxy: {
+      "/ftp": "http://localhost:3002",
+      "/api": "http://localhost:3002",
+      "/uploads": "http://localhost:3002",
+    },
   },
 })

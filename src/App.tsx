@@ -5,14 +5,16 @@ import { StatusBar, getSystemMood } from "./components/StatusBar";
 import { HeroBanner } from "./components/HeroBanner";
 import { PrinterCard } from "./components/PrinterCard";
 import { PrintGallery } from "./components/PrintGallery";
+import { FileBrowser } from "./components/FileBrowser";
+import { Inventory } from "./components/Inventory";
 import "./App.css";
 
-type Tab = "status" | "gallery";
+type Tab = "status" | "gallery" | "files" | "inventory";
 
 function App() {
   const [tab, setTab] = useState<Tab>("status");
   const [liveCameras, setLiveCameras] = useState<Set<string>>(new Set());
-  const { printers, cameraFrames, connected } = usePrinterData(liveCameras);
+  const { printers, cameraFrames, connected, ftpListings, sendMessage } = usePrinterData(liveCameras);
   useAlerts(printers);
   const mood = getSystemMood(printers);
 
@@ -44,6 +46,18 @@ function App() {
             onClick={() => setTab("gallery")}
           >
             Print Gallery
+          </button>
+          <button
+            className={`tab-btn${tab === "files" ? " active" : ""}`}
+            onClick={() => setTab("files")}
+          >
+            Files
+          </button>
+          <button
+            className={`tab-btn${tab === "inventory" ? " active" : ""}`}
+            onClick={() => setTab("inventory")}
+          >
+            Inventory
           </button>
         </nav>
 
@@ -106,6 +120,8 @@ function App() {
           )}
 
           {tab === "gallery" && <PrintGallery printers={printers} />}
+          {tab === "files" && <FileBrowser printers={printers} ftpListings={ftpListings} sendMessage={sendMessage} />}
+          {tab === "inventory" && <Inventory />}
         </main>
 
         <footer className="footer">
