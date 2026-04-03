@@ -24,10 +24,15 @@ export interface CalibrationProfile {
   printer_model: string | null;
   nozzle_temp: number | null;
   bed_temp: number | null;
-  fan_speed: number | null;
+  fan_max_speed: number | null;
+  fan_min_speed: number | null;
   flow_ratio: number;
   pressure_advance: number | null;
   max_volumetric_speed: number | null;
+  bed_type: string | null;
+  layer_height: number | null;
+  filament_density: number | null;
+  print_settings_id: string | null;
   image_path: string | null;
   notes: string | null;
 }
@@ -168,17 +173,23 @@ interface ProfileFormData {
   printer_model: string;
   nozzle_temp: string;
   bed_temp: string;
-  fan_speed: string;
+  fan_max_speed: string;
+  fan_min_speed: string;
   flow_ratio: string;
   pressure_advance: string;
   max_volumetric_speed: string;
+  bed_type: string;
+  layer_height: string;
+  filament_density: string;
+  print_settings_id: string;
   notes: string;
 }
 
 const emptyProfile: ProfileFormData = {
   name: "", brand: "", type: "PLA", nozzle_size: "0.4", nozzle_material: "brass",
-  printer_model: "", nozzle_temp: "", bed_temp: "", fan_speed: "",
-  flow_ratio: "1.0", pressure_advance: "", max_volumetric_speed: "", notes: "",
+  printer_model: "", nozzle_temp: "", bed_temp: "", fan_max_speed: "", fan_min_speed: "",
+  flow_ratio: "1.0", pressure_advance: "", max_volumetric_speed: "",
+  bed_type: "", layer_height: "", filament_density: "", print_settings_id: "", notes: "",
 };
 
 function ProfileForm({ initial, onSave, onCancel }: {
@@ -191,14 +202,61 @@ function ProfileForm({ initial, onSave, onCancel }: {
       ? { name: initial.name, brand: initial.brand, type: initial.type,
           nozzle_size: String(initial.nozzle_size), nozzle_material: initial.nozzle_material,
           printer_model: initial.printer_model ?? "", nozzle_temp: String(initial.nozzle_temp ?? ""),
-          bed_temp: String(initial.bed_temp ?? ""), fan_speed: String(initial.fan_speed ?? ""),
+          bed_temp: String(initial.bed_temp ?? ""),
+          fan_max_speed: String(initial.fan_max_speed ?? ""),
+          fan_min_speed: String(initial.fan_min_speed ?? ""),
           flow_ratio: String(initial.flow_ratio), pressure_advance: String(initial.pressure_advance ?? ""),
-          max_volumetric_speed: String(initial.max_volumetric_speed ?? ""), notes: initial.notes ?? "" }
+          max_volumetric_speed: String(initial.max_volumetric_speed ?? ""),
+          bed_type: initial.bed_type ?? "", layer_height: String(initial.layer_height ?? ""),
+          filament_density: String(initial.filament_density ?? ""),
+          print_settings_id: initial.print_settings_id ?? "",
+          notes: initial.notes ?? "" }
       : emptyProfile
   );
   const [autoName, setAutoName] = useState(!initial);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const tmfRef = useRef<HTMLInputElement>(null);
+
+  async function handleImport3mf(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/parse-3mf", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setForm((f) => {
+        const next = { ...f };
+        if (data.brand) next.brand = data.brand;
+        if (data.type && FILAMENT_TYPES.includes(data.type)) next.type = data.type;
+        if (data.nozzle_size) next.nozzle_size = String(data.nozzle_size);
+        if (data.nozzle_material && NOZZLE_MATERIALS.includes(data.nozzle_material)) next.nozzle_material = data.nozzle_material;
+        if (data.profile_name) { next.name = data.profile_name; setAutoName(false); }
+        if (data.nozzle_temp) next.nozzle_temp = String(Math.round(data.nozzle_temp));
+        if (data.bed_temp) next.bed_temp = String(Math.round(data.bed_temp));
+        if (data.fan_max_speed != null) next.fan_max_speed = String(data.fan_max_speed);
+        if (data.fan_min_speed != null) next.fan_min_speed = String(data.fan_min_speed);
+        if (data.flow_ratio != null) next.flow_ratio = String(data.flow_ratio);
+        if (data.pressure_advance != null) next.pressure_advance = String(data.pressure_advance);
+        if (data.max_volumetric_speed != null) next.max_volumetric_speed = String(data.max_volumetric_speed);
+        if (data.bed_type) next.bed_type = data.bed_type;
+        if (data.layer_height != null) next.layer_height = String(data.layer_height);
+        if (data.filament_density != null) next.filament_density = String(data.filament_density);
+        if (data.print_settings_id) next.print_settings_id = data.print_settings_id;
+        if (autoName) next.name = autoProfileName(next.brand, next.type, next.nozzle_size);
+        return next;
+      });
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setImporting(false);
+      if (tmfRef.current) tmfRef.current.value = "";
+    }
+  }
 
   function set(key: keyof ProfileFormData, value: string) {
     setForm((f) => {
@@ -225,6 +283,13 @@ function ProfileForm({ initial, onSave, onCancel }: {
 
   return (
     <form className="inv-form" onSubmit={handleSubmit}>
+      <div className="inv-3mf-import">
+        <input ref={tmfRef} type="file" accept=".3mf" style={{ display: "none" }} onChange={handleImport3mf} />
+        <button type="button" className="inv-btn inv-btn-ghost inv-btn-import" onClick={() => tmfRef.current?.click()} disabled={importing}>
+          {importing ? "Importing…" : "↑ Import from .3mf"}
+        </button>
+        <span className="inv-import-hint">Pre-fills settings from a sliced file</span>
+      </div>
       <div className="inv-form-grid">
         <label className="inv-label">
           Brand
@@ -274,8 +339,20 @@ function ProfileForm({ initial, onSave, onCancel }: {
           <input className="inv-input" type="number" value={form.bed_temp} onChange={(e) => set("bed_temp", e.target.value)} placeholder="65" />
         </label>
         <label className="inv-label">
-          Fan Speed (%)
-          <input className="inv-input" type="number" min="0" max="100" value={form.fan_speed} onChange={(e) => set("fan_speed", e.target.value)} placeholder="100" />
+          Bed Type
+          <input className="inv-input" value={form.bed_type} onChange={(e) => set("bed_type", e.target.value)} placeholder="Cool Plate, Textured PEI…" />
+        </label>
+        <label className="inv-label">
+          Layer Height (mm)
+          <input className="inv-input" type="number" step="0.01" value={form.layer_height} onChange={(e) => set("layer_height", e.target.value)} placeholder="0.20" />
+        </label>
+        <label className="inv-label">
+          Fan Max Speed (%)
+          <input className="inv-input" type="number" min="0" max="100" value={form.fan_max_speed} onChange={(e) => set("fan_max_speed", e.target.value)} placeholder="100" />
+        </label>
+        <label className="inv-label">
+          Fan Min Speed (%)
+          <input className="inv-input" type="number" min="0" max="100" value={form.fan_min_speed} onChange={(e) => set("fan_min_speed", e.target.value)} placeholder="20" />
         </label>
         <label className="inv-label">
           Flow Ratio
@@ -288,6 +365,14 @@ function ProfileForm({ initial, onSave, onCancel }: {
         <label className="inv-label">
           Max Vol. Speed (mm³/s)
           <input className="inv-input" type="number" step="0.1" value={form.max_volumetric_speed} onChange={(e) => set("max_volumetric_speed", e.target.value)} placeholder="21.0" />
+        </label>
+        <label className="inv-label">
+          Filament Density (g/cm³)
+          <input className="inv-input" type="number" step="0.001" value={form.filament_density} onChange={(e) => set("filament_density", e.target.value)} placeholder="1.24" />
+        </label>
+        <label className="inv-label" style={{ gridColumn: "1 / -1" }}>
+          Print Settings ID
+          <input className="inv-input" value={form.print_settings_id} onChange={(e) => set("print_settings_id", e.target.value)} placeholder="0.20mm Standard @BBL X1C" />
         </label>
         <label className="inv-label" style={{ gridColumn: "1 / -1" }}>
           Reference Image
@@ -455,8 +540,17 @@ export function Inventory() {
                         {p.bed_temp != null && (
                           <span className="inv-setting"><span className="inv-setting-label">bed</span>{p.bed_temp}°C</span>
                         )}
-                        {p.fan_speed != null && (
-                          <span className="inv-setting"><span className="inv-setting-label">fan</span>{p.fan_speed}%</span>
+                        {p.bed_type && (
+                          <span className="inv-setting"><span className="inv-setting-label">surface</span>{p.bed_type}</span>
+                        )}
+                        {p.layer_height != null && (
+                          <span className="inv-setting"><span className="inv-setting-label">layer</span>{p.layer_height}mm</span>
+                        )}
+                        {p.fan_max_speed != null && (
+                          <span className="inv-setting"><span className="inv-setting-label">fan↑</span>{p.fan_max_speed}%</span>
+                        )}
+                        {p.fan_min_speed != null && (
+                          <span className="inv-setting"><span className="inv-setting-label">fan↓</span>{p.fan_min_speed}%</span>
                         )}
                         {p.flow_ratio != null && (
                           <span className="inv-setting"><span className="inv-setting-label">flow</span>{p.flow_ratio}</span>
@@ -466,6 +560,9 @@ export function Inventory() {
                         )}
                         {p.max_volumetric_speed != null && (
                           <span className="inv-setting"><span className="inv-setting-label">vol</span>{p.max_volumetric_speed}mm³/s</span>
+                        )}
+                        {p.filament_density != null && (
+                          <span className="inv-setting"><span className="inv-setting-label">ρ</span>{p.filament_density}g/cm³</span>
                         )}
                       </div>
                       {p.notes && <div className="inv-profile-notes">{p.notes}</div>}

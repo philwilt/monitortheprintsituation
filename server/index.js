@@ -5,13 +5,17 @@ import tls from "tls";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import express from "express";
 import multer from "multer";
+import AdmZip from "adm-zip";
 import { Client as FtpClient } from "basic-ftp";
 import {
   initDb, startPrintJob, finishPrintJob, startAlert, resolveAlert, getActiveAlerts,
   getFilaments, createFilament, updateFilament, deleteFilament,
   getProfiles, createProfile, updateProfile, deleteProfile,
+  getGalleryItems, createGalleryItem, updateGalleryItem, deleteGalleryItem, linkPrintJobToGallery,
+  getPrintLog, getStats,
 } from "./db.js";
 
 // ---- Paths ----
@@ -137,7 +141,7 @@ async function ftpConnect(printer) {
     port: 990,
     user: "bblp",
     password: printer.accessCode,
-    secure: true,
+    secure: "implicit",
     secureOptions: { rejectUnauthorized: false },
   });
   return client;
@@ -174,7 +178,7 @@ app.get("/ftp/download", async (req, res) => {
   if (!printer) return res.status(404).send("Printer not found");
   const client = new FtpClient();
   try {
-    await client.access({ host: printer.ip, port: 990, user: "bblp", password: printer.accessCode, secure: true, secureOptions: { rejectUnauthorized: false } });
+    await client.access({ host: printer.ip, port: 990, user: "bblp", password: printer.accessCode, secure: "implicit", secureOptions: { rejectUnauthorized: false } });
     const filename = String(filePath).split("/").filter(Boolean).pop() || "download";
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", "application/octet-stream");
@@ -226,6 +230,164 @@ app.put("/api/profiles/:id", upload.single("image"), async (req, res) => {
 });
 app.delete("/api/profiles/:id", async (req, res) => {
   try { await deleteProfile(req.params.id); res.json({ ok: true }); } catch (e) { res.status(500).send(e.message); }
+});
+
+// 3MF parser
+app.post("/api/parse-3mf", upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  try {
+    const zip = new AdmZip(req.file.path);
+
+    // Bambu 3MF configs are JSON. Values are per-filament arrays — index 0 = primary filament.
+    function parseJsonEntry(name) {
+      const e = zip.getEntry(name);
+      return e ? JSON.parse(e.getData().toString("utf8")) : null;
+    }
+
+    const proj = parseJsonEntry("Metadata/project_settings.config");
+    if (!proj) throw new Error("Not a Bambu 3MF — missing project_settings.config");
+
+    // Filament-specific overrides live in filament_settings_1.config (slot 1)
+    const fil = parseJsonEntry("Metadata/filament_settings_1.config");
+
+    // First element of an array field, or the scalar itself
+    function first(obj, key) {
+      const v = obj?.[key];
+      if (v == null) return null;
+      const s = Array.isArray(v) ? v[0] : v;
+      return s ?? null;
+    }
+
+    function firstNum(obj, key) {
+      const s = first(obj, key);
+      if (s == null) return null;
+      const n = parseFloat(s);
+      return isNaN(n) ? null : n;
+    }
+
+    // Sum all values in an array field (for total weight across all filament slots)
+    function sumArr(obj, key) {
+      const v = obj?.[key];
+      if (v == null) return null;
+      const arr = Array.isArray(v) ? v : [v];
+      const total = arr.reduce((acc, s) => {
+        const n = parseFloat(s);
+        return isNaN(n) ? acc : acc + n;
+      }, 0);
+      return total > 0 ? total : null;
+    }
+
+    // Brand: filament_settings_1 vendor takes priority (it's the user's custom profile)
+    const brand = first(fil, "filament_vendor") || first(proj, "filament_vendor");
+
+    // Save plate thumbnail as a gallery-usable image
+    let thumbnail_filename = null;
+    const thumbEntry = zip.getEntry("Metadata/plate_1.png") || zip.getEntry("Metadata/plate_1_small.png");
+    if (thumbEntry) {
+      thumbnail_filename = `thumb_${randomUUID()}.png`;
+      fs.writeFileSync(path.join(UPLOADS_DIR, thumbnail_filename), thumbEntry.getData());
+    }
+
+    // Normalize compatible printer names: strip " X.Xmm nozzle" suffix
+    function normalizePrinter(s) {
+      return s.replace(/\s+\d+\.\d+\s*(?:nozzle|mm nozzle)?$/i, "").trim();
+    }
+    const compatRaw = proj.upward_compatible_machine ?? proj.print_compatible_printers ?? [];
+    const compatible_printers = [...new Set(
+      (Array.isArray(compatRaw) ? compatRaw : [compatRaw])
+        .map(normalizePrinter)
+        .filter(Boolean)
+    )];
+
+    const filament_colours = Array.isArray(proj.filament_colour)
+      ? proj.filament_colour.filter(Boolean)
+      : [];
+
+    const result = {
+      // calibration profile fields
+      brand,
+      type:                 first(proj, "filament_type"),
+      nozzle_size:          firstNum(proj, "nozzle_diameter"),
+      nozzle_temp:          firstNum(proj, "nozzle_temperature"),
+      bed_temp:             firstNum(fil, "hot_plate_temp") ?? firstNum(proj, "hot_plate_temp"),
+      fan_max_speed:        firstNum(proj, "fan_max_speed"),
+      fan_min_speed:        firstNum(proj, "fan_min_speed"),
+      flow_ratio:           firstNum(proj, "filament_flow_ratio"),
+      pressure_advance:     firstNum(proj, "pressure_advance"),
+      max_volumetric_speed: firstNum(proj, "filament_max_volumetric_speed"),
+      nozzle_material:      first(proj, "nozzle_type"),
+      bed_type:             proj.curr_bed_type ?? null,
+      layer_height:         firstNum(proj, "layer_height"),
+      filament_density:     firstNum(proj, "filament_density"),
+      print_settings_id:    proj.print_settings_id ?? null,
+      profile_name:         first(fil, "filament_settings_id") || first(proj, "filament_settings_id"),
+      color_hex:            first(proj, "filament_colour") || first(proj, "filament_color"),
+      // gallery fields
+      infill_density:       proj.sparse_infill_density ?? null,
+      infill_pattern:       proj.sparse_infill_pattern ?? null,
+      wall_count:           proj.wall_loops != null ? parseInt(proj.wall_loops, 10) : null,
+      support_enabled:      proj.enable_support === "1",
+      filament_colours,
+      estimated_weight_g:   sumArr(proj, "filament_used_g"),
+      cost_per_kg:          firstNum(proj, "filament_cost"),
+      compatible_printers,
+      thumbnail_filename,
+    };
+
+    for (const k of Object.keys(result)) {
+      if (result[k] == null) delete result[k];
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
+});
+
+// Gallery items
+app.get("/api/gallery", async (_req, res) => {
+  try { res.json(await getGalleryItems()); } catch (e) { res.status(500).send(e.message); }
+});
+app.post("/api/gallery", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body, image_path: req.file ? req.file.filename : req.body.image_path || null };
+    if (data.filament_colours && typeof data.filament_colours === "string") data.filament_colours = JSON.parse(data.filament_colours);
+    if (data.compatible_printers && typeof data.compatible_printers === "string") data.compatible_printers = JSON.parse(data.compatible_printers);
+    data.support_enabled = data.support_enabled === "true" || data.support_enabled === true;
+    res.json(await createGalleryItem(data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.put("/api/gallery/:id", upload.single("image"), async (req, res) => {
+  try {
+    const data = { ...req.body };
+    if (req.file) data.image_path = req.file.filename;
+    if (data.filament_colours && typeof data.filament_colours === "string") data.filament_colours = JSON.parse(data.filament_colours);
+    if (data.compatible_printers && typeof data.compatible_printers === "string") data.compatible_printers = JSON.parse(data.compatible_printers);
+    data.support_enabled = data.support_enabled === "true" || data.support_enabled === true;
+    res.json(await updateGalleryItem(req.params.id, data));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.delete("/api/gallery/:id", async (req, res) => {
+  try { await deleteGalleryItem(req.params.id); res.json({ ok: true }); } catch (e) { res.status(500).send(e.message); }
+});
+
+// Stats
+app.get("/api/stats", async (_req, res) => {
+  try {
+    const data = await getStats();
+    if (!data) return res.json(null);
+    res.json(data);
+  } catch (e) { res.status(500).send(e.message); }
+});
+
+// Print log
+app.get("/api/log", async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days || "7", 10), 90);
+    res.json(await getPrintLog(days));
+  } catch (e) { res.status(500).send(e.message); }
 });
 
 app.listen(3002, "127.0.0.1");
@@ -358,8 +520,10 @@ for (const printer of PRINTERS) {
         const job = activeJobs.get(printer.id);
         if (currState === "RUNNING" && prevState !== "RUNNING") {
           startPrintJob(printer.id, mergedData.subtask_name, mergedData.gcode_file)
-            .then((jobId) => {
-              if (jobId) activeJobs.set(printer.id, { jobId });
+            .then(async (jobId) => {
+              if (!jobId) return;
+              const galleryMatch = await linkPrintJobToGallery(printer.id, mergedData.subtask_name);
+              activeJobs.set(printer.id, { jobId, galleryItemId: galleryMatch?.id ?? null });
             });
         } else if ((currState === "FINISH" || currState === "FAILED") && job) {
           const filament = getActiveFilamentInfo(mergedData);

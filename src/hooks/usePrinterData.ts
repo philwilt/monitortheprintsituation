@@ -203,9 +203,12 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
           lastFrameTimeRef.current.set(msg.printer, Date.now());
         }
 
-        // Revoke the previous pending blob for this printer (if not yet flushed)
+        // Revoke the previous pending blob only if it hasn't been displayed yet.
+        // After the first RAF fires, pendingFramesRef mirrors blobUrlsRef, so
+        // the "previous pending" IS the currently-displayed URL — don't revoke it.
         const prevPending = pendingFramesRef.current.get(msg.printer);
-        if (prevPending) URL.revokeObjectURL(prevPending);
+        const currentDisplayed = blobUrlsRef.current.get(msg.printer);
+        if (prevPending && prevPending !== currentDisplayed) URL.revokeObjectURL(prevPending);
 
         const arr = Uint8Array.from(atob(msg.frame), (c) => c.charCodeAt(0));
         const url = URL.createObjectURL(new Blob([arr], { type: "image/jpeg" }));
@@ -215,10 +218,13 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
           frameRafRef.current = requestAnimationFrame(() => {
             frameRafRef.current = undefined;
             const next = new Map(pendingFramesRef.current);
-            // Collect old URLs to revoke, but defer until after React paints the new srcs
+            // Only revoke old URLs that are actually being replaced by a new one.
+            // If a printer has no new frame this cycle, next[id] === blobUrls[id]
+            // (same URL) — revoking it would freeze that camera.
             const toRevoke: string[] = [];
             for (const [id, oldUrl] of blobUrlsRef.current) {
-              if (next.has(id)) toRevoke.push(oldUrl);
+              const newUrl = next.get(id);
+              if (newUrl !== undefined && newUrl !== oldUrl) toRevoke.push(oldUrl);
             }
             for (const [id, url] of next) blobUrlsRef.current.set(id, url);
             setCameraFrames(next);

@@ -1,21 +1,25 @@
 import { useState } from "react";
 import { usePrinterData } from "./hooks/usePrinterData";
 import { useAlerts } from "./hooks/useAlerts";
+import { useGallery, matchGalleryItem } from "./hooks/useGallery";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
 import { HeroBanner } from "./components/HeroBanner";
 import { PrinterCard } from "./components/PrinterCard";
 import { PrintGallery } from "./components/PrintGallery";
+import { PrintLog } from "./components/PrintLog";
+import { Stats } from "./components/Stats";
 import { FileBrowser } from "./components/FileBrowser";
 import { Inventory } from "./components/Inventory";
 import "./App.css";
 
-type Tab = "status" | "gallery" | "files" | "inventory";
+type Tab = "status" | "gallery" | "log" | "stats" | "files" | "inventory";
 
 function App() {
   const [tab, setTab] = useState<Tab>("status");
   const [liveCameras, setLiveCameras] = useState<Set<string>>(new Set());
   const { printers, cameraFrames, connected, ftpListings, sendMessage } = usePrinterData(liveCameras);
   useAlerts(printers);
+  const { items: galleryItems } = useGallery();
   const mood = getSystemMood(printers);
 
   const timestamp = new Date().toLocaleDateString("en-US", {
@@ -46,6 +50,18 @@ function App() {
             onClick={() => setTab("gallery")}
           >
             Print Gallery
+          </button>
+          <button
+            className={`tab-btn${tab === "log" ? " active" : ""}`}
+            onClick={() => setTab("log")}
+          >
+            Log
+          </button>
+          <button
+            className={`tab-btn${tab === "stats" ? " active" : ""}`}
+            onClick={() => setTab("stats")}
+          >
+            Stats
           </button>
           <button
             className={`tab-btn${tab === "files" ? " active" : ""}`}
@@ -112,6 +128,7 @@ function App() {
                       key={printer.id}
                       printer={printer}
                       hideCamera
+                      galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
                     />
                   ))}
                 </div>
@@ -120,6 +137,8 @@ function App() {
           )}
 
           {tab === "gallery" && <PrintGallery printers={printers} />}
+          {tab === "log" && <PrintLog />}
+          {tab === "stats" && <Stats />}
           {tab === "files" && <FileBrowser printers={printers} ftpListings={ftpListings} sendMessage={sendMessage} />}
           {tab === "inventory" && <Inventory />}
         </main>

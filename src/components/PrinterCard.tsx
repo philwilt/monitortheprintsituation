@@ -1,5 +1,6 @@
 import { memo, useState, useEffect } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
+import type { GalleryItem } from "../hooks/useGallery";
 import { decodeHMS } from "../utils/hms";
 
 function useElapsedTime(startedAt: number | null | undefined): string | null {
@@ -25,6 +26,7 @@ interface Props {
   printer: PrinterInfo;
   cameraFrame?: string;
   hideCamera?: boolean;
+  galleryItem?: GalleryItem | null;
 }
 
 function formatTime(minutes?: number): string {
@@ -254,7 +256,7 @@ function detectAnomaly(printer: PrinterInfo): string | null {
   return null;
 }
 
-export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hideCamera }: Props) {
+export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hideCamera, galleryItem }: Props) {
   const d = printer.data;
   const cardState = getCardState(printer);
   const anomaly =
@@ -419,6 +421,32 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
                     <span className="progress-pct-unit">%</span>
                   </span>
                 </div>
+                {galleryItem && (() => {
+                  const hasCost = galleryItem.estimated_weight_g != null && galleryItem.cost_per_kg != null;
+                  const costSoFar = hasCost
+                    ? ((d.mc_percent || 0) / 100) * galleryItem.estimated_weight_g! * galleryItem.cost_per_kg! / 1000
+                    : null;
+                  const hasSlice = galleryItem.layer_height || galleryItem.infill_density || galleryItem.wall_count || galleryItem.support_enabled;
+                  return (
+                    <div className="print-gallery-info">
+                      {hasSlice && (
+                        <div className="print-slice-row">
+                          {galleryItem.layer_height && <span className="print-slice-tag">{galleryItem.layer_height}mm</span>}
+                          {galleryItem.infill_density && <span className="print-slice-tag">{galleryItem.infill_density}{galleryItem.infill_pattern ? ` ${galleryItem.infill_pattern}` : ""}</span>}
+                          {galleryItem.wall_count && <span className="print-slice-tag">{galleryItem.wall_count}w</span>}
+                          {galleryItem.support_enabled && <span className="print-slice-tag print-slice-tag-support">supports</span>}
+                        </div>
+                      )}
+                      {costSoFar != null && (
+                        <span className="print-cost-so-far">
+                          <span className="print-cost-label">cost so far</span>
+                          ${costSoFar.toFixed(2)}
+                          {hasCost && <span className="print-cost-total"> / ${((galleryItem.estimated_weight_g! * galleryItem.cost_per_kg!) / 1000).toFixed(2)}</span>}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
