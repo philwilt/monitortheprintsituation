@@ -3,7 +3,6 @@ import { usePrinterData } from "./hooks/usePrinterData";
 import { useAlerts } from "./hooks/useAlerts";
 import { useGallery, matchGalleryItem } from "./hooks/useGallery";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
-import { HeroBanner } from "./components/HeroBanner";
 import { PrinterCard } from "./components/PrinterCard";
 import { PrintGallery } from "./components/PrintGallery";
 import { PrintLog } from "./components/PrintLog";
@@ -35,8 +34,6 @@ function App() {
 
       <div className="app" data-mood={mood}>
         <StatusBar printers={printers} connected={connected} />
-
-        <HeroBanner />
 
         <nav className="tab-bar">
           <button
@@ -89,50 +86,23 @@ function App() {
                 </div>
               </div>
             ) : (
-              <>
-                <div className="camera-strip">
-                  {Array.from(printers.values()).map((printer) => {
-                    const frame = cameraFrames.get(printer.id);
-                    const isLive = liveCameras.has(printer.id);
-                    return (
-                      <div
-                        key={printer.id}
-                        className="camera-cell"
-                        onClick={() => setLiveCameras((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(printer.id)) next.delete(printer.id);
-                          else next.add(printer.id);
-                          return next;
-                        })}
-                      >
-                        {frame ? (
-                          <img src={frame} alt={`${printer.name} feed`} />
-                        ) : (
-                          <div className="camera-placeholder">{printer.name}</div>
-                        )}
-                        <div className="camera-cell-footer">
-                          <span className="camera-cell-name">{printer.name}</span>
-                          <span className={`camera-live-badge${isLive ? " live" : ""}`}>
-                            <span className="live-toggle-dot" />
-                            {isLive ? "live" : "click for live"}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="printer-grid">
-                  {Array.from(printers.values()).map((printer) => (
-                    <PrinterCard
-                      key={printer.id}
-                      printer={printer}
-                      hideCamera
-                      galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
-                    />
-                  ))}
-                </div>
-              </>
+              <div className="printer-grid">
+                {Array.from(printers.values()).map((printer) => (
+                  <PrinterCard
+                    key={printer.id}
+                    printer={printer}
+                    cameraFrame={cameraFrames.get(printer.id)}
+                    isLive={liveCameras.has(printer.id)}
+                    onToggleLive={() => setLiveCameras((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(printer.id)) next.delete(printer.id);
+                      else next.add(printer.id);
+                      return next;
+                    })}
+                    galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
+                  />
+                ))}
+              </div>
             )
           )}
 

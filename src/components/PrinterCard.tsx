@@ -25,7 +25,8 @@ function useElapsedTime(startedAt: number | null | undefined): string | null {
 interface Props {
   printer: PrinterInfo;
   cameraFrame?: string;
-  hideCamera?: boolean;
+  isLive?: boolean;
+  onToggleLive?: () => void;
   galleryItem?: GalleryItem | null;
 }
 
@@ -160,6 +161,49 @@ function speedLabel(lvl?: number): string {
   }
 }
 
+// Returns the { unitId, trayId } that is actually active, using the same
+// 3-strategy resolution as getActiveFilament so HT slots win over empty
+// regular slots with the same tray id.
+function getActiveTrayRef(
+  printer: PrinterInfo
+): { unitId: string; trayId: string } | null {
+  const d = printer.data;
+  if (!d) return null;
+  const trayNow = d.ams?.tray_now;
+  const globalIdx = trayNow != null ? parseInt(trayNow, 10) : NaN;
+
+  if (d.ams?.ams && d.ams.ams.length > 0 && !isNaN(globalIdx) && globalIdx < 254) {
+    // Strategy 1: direct tray ID match — skip empty trays
+    for (const unit of d.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (tray.id === trayNow && tray.tray_type) {
+          return { unitId: unit.id, trayId: tray.id };
+        }
+      }
+    }
+    // Strategy 2: counter-based global index
+    let counter = 0;
+    for (const unit of d.ams.ams) {
+      if (!unit.tray) continue;
+      for (const tray of unit.tray) {
+        if (counter === globalIdx && tray.tray_type) {
+          return { unitId: unit.id, trayId: tray.id };
+        }
+        counter++;
+      }
+    }
+    // Strategy 3: tray_now matches the unit's own id (AMS HT quirk)
+    for (const unit of d.ams.ams) {
+      if (unit.id === trayNow && unit.tray) {
+        const tray = unit.tray.find((t) => t.tray_type);
+        if (tray) return { unitId: unit.id, trayId: tray.id };
+      }
+    }
+  }
+  return null;
+}
+
 function getActiveFilament(
   printer: PrinterInfo
 ): { color: string; type: string } | null {
@@ -256,7 +300,7 @@ function detectAnomaly(printer: PrinterInfo): string | null {
   return null;
 }
 
-export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hideCamera, galleryItem }: Props) {
+export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isLive, onToggleLive, galleryItem }: Props) {
   const d = printer.data;
   const cardState = getCardState(printer);
   const anomaly =
@@ -266,6 +310,8 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
   const elapsed = useElapsedTime(
     (cardState === "paused" || cardState === "error") ? printer.alertStartedAt : null
   );
+
+  const activeTrayRef = printer.status === "connected" ? getActiveTrayRef(printer) : null;
 
   const cardClass = [
     "printer-card",
@@ -278,8 +324,35 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
 
   const isConnected = printer.status === "connected" && d;
 
+  const pct = d?.mc_percent || 0;
+  const isRunning = d?.gcode_state === "RUNNING";
+
   return (
     <div className={cardClass}>
+      {/* Camera — top of card */}
+      <div className="card-camera" onClick={onToggleLive}>
+        {cameraFrame ? (
+          <img src={cameraFrame} alt={`${printer.name} feed`} />
+        ) : (
+          <div className="camera-placeholder">{printer.name}</div>
+        )}
+        {isRunning && (
+          <div className="card-camera-progress">
+            <div className="card-camera-progress-fill" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        {isRunning && (
+          <div className="card-camera-pct">{pct}<span className="card-camera-pct-unit">%</span></div>
+        )}
+        <div className="card-camera-footer">
+          <span className="card-camera-name">{printer.name}</span>
+          <span className={`camera-live-badge${isLive ? " live" : ""}`}>
+            <span className="live-toggle-dot" />
+            {isLive ? "live" : "click for live"}
+          </span>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="card-header">
         <div className="card-identity">
@@ -406,22 +479,8 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
               </div>
             )}
 
-            {/* Progress */}
-            {d.gcode_state === "RUNNING" && (
-              <div className="progress-section">
-                <div className="progress-bar-row">
-                  <div className="progress-bar-track">
-                    <div
-                      className="progress-bar-fill"
-                      style={{ width: `${d.mc_percent || 0}%` }}
-                    />
-                  </div>
-                  <span className="progress-pct">
-                    {d.mc_percent || 0}
-                    <span className="progress-pct-unit">%</span>
-                  </span>
-                </div>
-                {galleryItem && (() => {
+            {/* Gallery slice info + cost */}
+            {d.gcode_state === "RUNNING" && galleryItem && (() => {
                   const hasCost = galleryItem.estimated_weight_g != null && galleryItem.cost_per_kg != null;
                   const costSoFar = hasCost
                     ? ((d.mc_percent || 0) / 100) * galleryItem.estimated_weight_g! * galleryItem.cost_per_kg! / 1000
@@ -447,8 +506,6 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
                     </div>
                   );
                 })()}
-              </div>
-            )}
 
             {/* Inline details row: filament, speed, wifi, chamber */}
             <div className="card-details">
@@ -497,7 +554,7 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
                       {trays.map((tray) => {
                         const isEmpty = !tray.tray_type;
                         const color = isEmpty ? undefined : `#${tray.tray_color?.slice(0, 6) || "444"}`;
-                        const isActive = d.ams?.tray_now === tray.id;
+                        const isActive = activeTrayRef?.unitId === unit.id && activeTrayRef?.trayId === tray.id;
                         return (
                           <span
                             key={`${unit.id}-${tray.id}`}
@@ -538,19 +595,6 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, hid
           </>
         )}
 
-        {/* Camera */}
-        {!hideCamera && (
-          <div className="camera-section">
-            {cameraFrame ? (
-              <>
-                <img src={cameraFrame} alt={`${printer.name} feed`} />
-                <span className="camera-overlay">{printer.name} — live</span>
-              </>
-            ) : (
-              <div className="camera-placeholder">no feed</div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

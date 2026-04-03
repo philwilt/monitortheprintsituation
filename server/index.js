@@ -700,7 +700,7 @@ function startTLSCameraStream(printerId) {
     const user = Buffer.alloc(32);
     Buffer.from("bblp").copy(user);
     const pass = Buffer.alloc(32);
-    Buffer.from(printer.accessCode, "hex").copy(pass);
+    Buffer.from(printer.accessCode).copy(pass);
     socket.write(Buffer.concat([header, user, pass]));
   });
 
