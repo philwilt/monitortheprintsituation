@@ -1,7 +1,7 @@
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useCallback } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 import type { GalleryItem } from "../hooks/useGallery";
-import { decodeHMS } from "../utils/hms";
+import { decodeHMS, wikiBase } from "../utils/hms";
 
 function useElapsedTime(startedAt: number | null | undefined): string | null {
   const [, setTick] = useState(0);
@@ -313,6 +313,13 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
 
   const activeTrayRef = printer.status === "connected" ? getActiveTrayRef(printer) : null;
 
+  const [dismissedHms, setDismissedHms] = useState<Set<string>>(new Set());
+  const [dismissedPrintError, setDismissedPrintError] = useState<number | null>(null);
+
+  const dismissHms = useCallback((key: string) => {
+    setDismissedHms((prev) => new Set([...prev, key]));
+  }, []);
+
   const cardClass = [
     "printer-card",
     cardState === "printing" && "state-printing",
@@ -407,29 +414,52 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
           )}
         </div>
 
-        {/* HMS alerts — only known codes are shown */}
+        {/* HMS alerts */}
         {isConnected && d.hms && d.hms.length > 0 && (() => {
-          const alerts = d.hms.map((h) => decodeHMS(h.attr, h.code)).filter(Boolean);
-          if (alerts.length === 0) return null;
+          const visible = d.hms.filter((h) => !dismissedHms.has(decodeHMS(h.attr, h.code, printer.model).key));
+          if (visible.length === 0) return null;
           return (
             <div className="hms-alerts">
-              {alerts.map((alert) => (
-                <div key={alert!.key} className={`hms-alert ${alert!.severity}`}>
-                  <span className="hms-alert-dot" />
-                  {alert!.message}
-                  <a
-                    className="hms-alert-link"
-                    href={alert!.wikiUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {alert!.key} ↗
-                  </a>
-                </div>
-              ))}
+              {visible.map((h) => {
+                const alert = decodeHMS(h.attr, h.code, printer.model);
+                return (
+                  <div key={alert.key} className={`hms-alert ${alert.severity}`}>
+                    <span className="hms-alert-dot" />
+                    {alert.message}
+                    <a
+                      className="hms-alert-link"
+                      href={alert.wikiUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {alert.key} ↗
+                    </a>
+                    <button className="hms-alert-dismiss" onClick={() => dismissHms(alert.key)} aria-label="Dismiss">×</button>
+                  </div>
+                );
+              })}
             </div>
           );
         })()}
+
+        {/* print_error — non-zero means firmware reported a specific error code */}
+        {isConnected && !!d.print_error && d.print_error !== dismissedPrintError && (
+          <div className="hms-alerts">
+            <div className="hms-alert error">
+              <span className="hms-alert-dot" />
+              Print error
+              <a
+                className="hms-alert-link"
+                href={`https://wiki.bambulab.com/en/${wikiBase(printer.model)}/troubleshooting/print-error`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                0x{d.print_error.toString(16).toUpperCase()} ↗
+              </a>
+              <button className="hms-alert-dismiss" onClick={() => setDismissedPrintError(d.print_error!)} aria-label="Dismiss">×</button>
+            </div>
+          </div>
+        )}
 
         {/* Anomaly */}
         {anomaly && (

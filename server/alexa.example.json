@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "deviceName": "Echo Dot",
+  "notifyOn": {
+    "PAUSE": true,
+    "FAILED": true,
+    "FINISH": false
+  },
+  "amazonPage": "amazon.com",
+  "alexaServiceHost": "alexa.amazon.com",
+  "acceptLanguage": "en-US",
+  "proxyPort": 3003
+}

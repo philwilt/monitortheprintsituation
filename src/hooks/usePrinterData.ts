@@ -61,6 +61,7 @@ export interface PrinterData {
     spaghetti_detector?: boolean;
   };
   hms?: Array<{ attr: number; code: number }>;
+  print_error?: number;
 }
 
 export interface FtpFileInfo {

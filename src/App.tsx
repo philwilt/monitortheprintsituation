@@ -1,9 +1,23 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { usePrinterData } from "./hooks/usePrinterData";
 import { useAlerts } from "./hooks/useAlerts";
 import { useGallery, matchGalleryItem } from "./hooks/useGallery";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
 import { PrinterCard } from "./components/PrinterCard";
+import { SortablePrinterCard } from "./components/SortablePrinterCard";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
 import { PrintGallery } from "./components/PrintGallery";
 import { PrintLog } from "./components/PrintLog";
 import { Stats } from "./components/Stats";
@@ -20,6 +34,33 @@ function App() {
   useAlerts(printers);
   const { items: galleryItems } = useGallery();
   const mood = getSystemMood(printers);
+
+  const [cardOrder, setCardOrder] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("printer-card-order") ?? "[]"); }
+    catch { return []; }
+  });
+
+  const orderedPrinters = useMemo(() => {
+    const all = Array.from(printers.values());
+    const ordered = cardOrder.map((id) => all.find((p) => p.id === id)).filter(Boolean) as typeof all;
+    const inOrder = new Set(cardOrder);
+    for (const p of all) if (!inOrder.has(p.id)) ordered.push(p);
+    return ordered;
+  }, [printers, cardOrder]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const ids = orderedPrinters.map((p) => p.id);
+    const from = ids.indexOf(active.id as string);
+    const to = ids.indexOf(over.id as string);
+    const next = arrayMove(ids, from, to);
+    localStorage.setItem("printer-card-order", JSON.stringify(next));
+    setCardOrder(next);
+  }
 
   const timestamp = new Date().toLocaleDateString("en-US", {
     year: "numeric",
@@ -86,23 +127,27 @@ function App() {
                 </div>
               </div>
             ) : (
-              <div className="printer-grid">
-                {Array.from(printers.values()).map((printer) => (
-                  <PrinterCard
-                    key={printer.id}
-                    printer={printer}
-                    cameraFrame={cameraFrames.get(printer.id)}
-                    isLive={liveCameras.has(printer.id)}
-                    onToggleLive={() => setLiveCameras((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(printer.id)) next.delete(printer.id);
-                      else next.add(printer.id);
-                      return next;
-                    })}
-                    galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
-                  />
-                ))}
-              </div>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={orderedPrinters.map((p) => p.id)} strategy={rectSortingStrategy}>
+                  <div className="printer-grid">
+                    {orderedPrinters.map((printer) => (
+                      <SortablePrinterCard
+                        key={printer.id}
+                        printer={printer}
+                        cameraFrame={cameraFrames.get(printer.id)}
+                        isLive={liveCameras.has(printer.id)}
+                        onToggleLive={() => setLiveCameras((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(printer.id)) next.delete(printer.id);
+                          else next.add(printer.id);
+                          return next;
+                        })}
+                        galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )
           )}
 

@@ -27,6 +27,10 @@ server/printers.json
 # TUTK URL cache — auto-generated, contains auth tokens
 server/tutk_urls.json
 
+# Alexa auth session — contains Amazon session cookies
+server/alexa.json
+server/alexa-data.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

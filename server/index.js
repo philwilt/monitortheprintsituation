@@ -10,6 +10,7 @@ import express from "express";
 import multer from "multer";
 import AdmZip from "adm-zip";
 import { Client as FtpClient } from "basic-ftp";
+import { initAlexa, notify as alexaNotify } from "./alexa.js";
 import {
   initDb, startPrintJob, finishPrintJob, startAlert, resolveAlert, getActiveAlerts,
   getFilaments, createFilament, updateFilament, deleteFilament,
@@ -86,6 +87,8 @@ const activeJobs = new Map();      // printerId → { jobId, gcodeState }
 // ---- Database ----
 // alertStartedAt map: printerId → ms timestamp (in-memory mirror of DB)
 const alertStartedAtMap = new Map();
+initAlexa();
+
 initDb(PRINTERS).then(async () => {
   const alerts = await getActiveAlerts();
   for (const { printer_id, started_at } of alerts) {
@@ -534,6 +537,9 @@ for (const printer of PRINTERS) {
             filament?.type,
             filament?.color
           ).then(() => activeJobs.delete(printer.id));
+          if (currState === "FINISH") {
+            alexaNotify(printer.id, `${printer.name} has finished printing.`, "FINISH");
+          }
         }
 
         // Alert lifecycle: PAUSE or FAILED → start; anything else → resolve
@@ -542,6 +548,10 @@ for (const printer of PRINTERS) {
           alertStartedAtMap.set(printer.id, now);
           startAlert(printer.id, currState);
           broadcast({ type: "printer_status", printer: printer.id, state: { ...merged, alertStartedAt: now } });
+          const alertMsg = currState === "PAUSE"
+            ? `${printer.name} has paused. Check the dashboard.`
+            : `${printer.name} has failed. Check the dashboard.`;
+          alexaNotify(printer.id, alertMsg, currState);
         } else {
           alertStartedAtMap.delete(printer.id);
           resolveAlert(printer.id);

@@ -27,8 +27,9 @@ export function useAlerts(printers: Map<string, PrinterInfo>) {
       const prevKeys = new Set(prevHms.map((h) => `${h.attr}-${h.code}`));
       for (const h of currHms) {
         if (!prevKeys.has(`${h.attr}-${h.code}`)) {
-          const decoded = decodeHMS(h.attr, h.code);
-          if (decoded) notify(printer.name, decoded.message);
+          const decoded = decodeHMS(h.attr, h.code, printer.model);
+          const msg = decoded.unknown ? `Unknown error (${decoded.key})` : decoded.message;
+          notify(printer.name, msg);
         }
       }
 
