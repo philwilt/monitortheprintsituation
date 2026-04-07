@@ -414,30 +414,29 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
           )}
         </div>
 
-        {/* HMS alerts */}
+        {/* HMS alerts — unknown codes are suppressed; known codes only */}
         {isConnected && d.hms && d.hms.length > 0 && (() => {
-          const visible = d.hms.filter((h) => !dismissedHms.has(decodeHMS(h.attr, h.code, printer.model).key));
+          const visible = d.hms
+            .map((h) => decodeHMS(h.attr, h.code, printer.model))
+            .filter((a) => !a.unknown && !dismissedHms.has(a.key));
           if (visible.length === 0) return null;
           return (
             <div className="hms-alerts">
-              {visible.map((h) => {
-                const alert = decodeHMS(h.attr, h.code, printer.model);
-                return (
-                  <div key={alert.key} className={`hms-alert ${alert.severity}`}>
-                    <span className="hms-alert-dot" />
-                    {alert.message}
-                    <a
-                      className="hms-alert-link"
-                      href={alert.wikiUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {alert.key} ↗
-                    </a>
-                    <button className="hms-alert-dismiss" onClick={() => dismissHms(alert.key)} aria-label="Dismiss">×</button>
-                  </div>
-                );
-              })}
+              {visible.map((alert) => (
+                <div key={alert.key} className={`hms-alert ${alert.severity}`}>
+                  <span className="hms-alert-dot" />
+                  {alert.message}
+                  <a
+                    className="hms-alert-link"
+                    href={alert.wikiUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {alert.key} ↗
+                  </a>
+                  <button className="hms-alert-dismiss" onClick={() => dismissHms(alert.key)} aria-label="Dismiss">×</button>
+                </div>
+              ))}
             </div>
           );
         })()}

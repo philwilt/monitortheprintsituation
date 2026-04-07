@@ -21,15 +21,16 @@ export function useAlerts(printers: Map<string, PrinterInfo>) {
       // Skip first data arrival — no prev state to diff against
       if (!prevPrinter?.data || !printer.data) continue;
 
-      // New HMS alerts (compare by attr+code pair)
+      // New HMS errors only (severity: "error" — things that turn the card red)
       const prevHms = prevPrinter.data.hms ?? [];
       const currHms = printer.data.hms ?? [];
       const prevKeys = new Set(prevHms.map((h) => `${h.attr}-${h.code}`));
       for (const h of currHms) {
         if (!prevKeys.has(`${h.attr}-${h.code}`)) {
           const decoded = decodeHMS(h.attr, h.code, printer.model);
-          const msg = decoded.unknown ? `Unknown error (${decoded.key})` : decoded.message;
-          notify(printer.name, msg);
+          if (!decoded.unknown && decoded.severity === "error") {
+            notify(printer.name, decoded.message);
+          }
         }
       }
 
