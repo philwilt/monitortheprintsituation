@@ -3,7 +3,6 @@ import { usePrinterData } from "./hooks/usePrinterData";
 import { useAlerts } from "./hooks/useAlerts";
 import { useGallery, matchGalleryItem } from "./hooks/useGallery";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
-import { PrinterCard } from "./components/PrinterCard";
 import { SortablePrinterCard } from "./components/SortablePrinterCard";
 import {
   DndContext,

@@ -393,7 +393,18 @@ app.get("/api/log", async (req, res) => {
   } catch (e) { res.status(500).send(e.message); }
 });
 
-app.listen(3002, "127.0.0.1");
+const IS_PROD = process.env.NODE_ENV === "production";
+const DIST_DIR = path.join(path.dirname(new URL(import.meta.url).pathname), "../dist");
+
+if (IS_PROD && fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+  app.get("/{*path}", (_req, res) => res.sendFile(path.join(DIST_DIR, "index.html")));
+  const PORT = parseInt(process.env.PORT || "3003");
+  app.listen(PORT, "0.0.0.0");
+  console.log(`Serving on http://0.0.0.0:${PORT}`);
+} else {
+  app.listen(3002, "127.0.0.1");
+}
 
 // ---- WebSocket server ----
 const wss = new WebSocketServer({ port: 3001 });

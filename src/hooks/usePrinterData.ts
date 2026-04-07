@@ -112,7 +112,8 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
   const dataRafRef = useRef<number | undefined>(undefined);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    const state = wsRef.current?.readyState;
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
 
     const ws = new WebSocket(`ws://${window.location.hostname}:3001`);
     wsRef.current = ws;
@@ -238,8 +239,12 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
     };
 
     ws.onclose = () => {
-      setConnected(false);
-      reconnectTimer.current = setTimeout(connect, 3000);
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+        setConnected(false);
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = setTimeout(connect, 3000);
+      }
     };
 
     ws.onerror = () => {

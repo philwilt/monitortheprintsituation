@@ -71,7 +71,6 @@ function GalleryForm({ initial, onSave, onCancel }: {
   const [form, setForm] = useState<FormData>(initial ? fromItem(initial) : empty);
   const [importing, setImporting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
   const tmfRef = useRef<HTMLInputElement>(null);
   const imgRef = useRef<HTMLInputElement>(null);
 
@@ -405,9 +404,8 @@ function GalleryDetail({ item, printers, onClose, onEdit, onDelete }: {
 
 // ---- Gallery Card ----
 
-function GalleryCard({ item, printers, onOpen, onEdit, onDelete }: {
+function GalleryCard({ item, onOpen, onEdit, onDelete }: {
   item: GalleryItem;
-  printers: PrinterInfo[];
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -546,7 +544,7 @@ export function PrintGallery({ printers }: Props) {
             <GalleryCard
               key={item.id}
               item={item}
-              printers={printerList}
+
               onOpen={() => setDetail(item)}
               onEdit={() => setEditing(item)}
               onDelete={() => handleDelete(item.id)}
