@@ -84,6 +84,20 @@ const printerStates = new Map();
 const cameraProcesses = new Map(); // printerId → {proc, ws}
 const activeJobs = new Map();      // printerId → { jobId, gcodeState }
 
+// ---- Camera mode ----
+// Each printer is either "poll" (one frame every POLL_INTERVAL_MS) or "live"
+// (continuous stream at LIVE_FPS). Default is poll — live is only enabled while
+// a client has the card expanded to camera view.
+const POLL_INTERVAL_MS = 30000;
+const LIVE_FPS = 24;
+const LIVE_QUALITY = 3;       // ffmpeg -q:v for MJPEG (1=best/largest, 31=worst). 3 is plenty for a dashboard tile.
+const FFMPEG_HWACCEL = process.env.FFMPEG_HWACCEL || ""; // e.g. "cuda" or "vaapi" — adds -hwaccel before -i
+const cameraModes = new Map();   // printerId → "poll" | "live"
+const pollTimers = new Map();    // printerId → setTimeout handle for next poll
+function hwaccelArgs() {
+  return FFMPEG_HWACCEL ? ["-hwaccel", FFMPEG_HWACCEL] : [];
+}
+
 // ---- Database ----
 // alertStartedAt map: printerId → ms timestamp (in-memory mirror of DB)
 const alertStartedAtMap = new Map();
@@ -530,7 +544,7 @@ for (const printer of PRINTERS) {
       // ---- Job + alert tracking ----
       const prevState = existingData.gcode_state;
       const currState = mergedData.gcode_state;
-      if (currState && currState !== prevState) {
+      if (currState && prevState && currState !== prevState) {
         const job = activeJobs.get(printer.id);
         if (currState === "RUNNING" && prevState !== "RUNNING") {
           startPrintJob(printer.id, mergedData.subtask_name, mergedData.gcode_file)
@@ -592,13 +606,16 @@ for (const printer of PRINTERS) {
 }
 
 // ---- Camera via bambu_source + ffmpeg ----
-function startCameraStream(printerId) {
+// `oneShot` mode: ffmpeg uses `-frames:v 1` and exits after the first JPEG.
+// Used by poll mode; live mode runs continuous at LIVE_FPS.
+function startCameraStream(printerId, { oneShot = false, onDone } = {}) {
   const printer = PRINTERS.find((p) => p.id === printerId);
   if (!printer) return;
 
   const tutkUrl = tutkUrls[printer.serial];
   if (!tutkUrl) {
     console.log(`No TUTK URL for ${printer.name} — open its camera in BambuStudio to register it`);
+    onDone?.();
     return;
   }
 
@@ -613,18 +630,21 @@ function startCameraStream(printerId) {
     env: { ...process.env, [libPathVar]: PLUGINS_DIR },
   });
 
-  const ffmpegProc = spawn(
-    FFMPEG,
-    [
-      "-f", "h264",
-      "-i", "pipe:",
-      "-f", "mjpeg",
-      "-q:v", "1",
-      "-vf", "fps=30",
-      "pipe:1",
-    ],
-    { env: process.env }
-  );
+  const ffmpegArgs = [
+    ...hwaccelArgs(),
+    "-f", "h264",
+    "-i", "pipe:",
+    "-f", "mjpeg",
+    "-q:v", String(LIVE_QUALITY),
+    "-threads", "1",
+  ];
+  if (oneShot) {
+    ffmpegArgs.push("-frames:v", "1");
+  } else {
+    ffmpegArgs.push("-vf", `fps=${LIVE_FPS}`);
+  }
+  ffmpegArgs.push("pipe:1");
+  const ffmpegProc = spawn(FFMPEG, ffmpegArgs, { env: process.env });
 
   bambuProc.stdout.pipe(ffmpegProc.stdin);
   bambuProc.stderr.on("data", () => {});
@@ -633,10 +653,11 @@ function startCameraStream(printerId) {
 
   let buf = Buffer.alloc(0);
   let firstFrame = true;
+  let intentionalKill = false;
   ffmpegProc.stdout.on("data", (chunk) => {
     buf = parseJpegFrames(Buffer.concat([buf, chunk]), (frame) => {
       if (firstFrame) {
-        console.log(`Camera live: ${printer.name} (TUTK)`);
+        console.log(`Camera ${oneShot ? "poll" : "live"}: ${printer.name} (TUTK)`);
         firstFrame = false;
       }
       broadcastFrame(printerId, frame);
@@ -645,21 +666,31 @@ function startCameraStream(printerId) {
 
   bambuProc.on("exit", (code) => {
     cameraProcesses.delete(printerId);
-    if (firstFrame) console.log(`Camera failed: ${printer.name} (TUTK exited ${code}) — TUTK URL may be expired, open camera in BambuStudio`);
-    setTimeout(() => startCameraStream(printerId), 5000);
+    if (firstFrame && !oneShot) console.log(`Camera failed: ${printer.name} (TUTK exited ${code}) — TUTK URL may be expired, open camera in BambuStudio`);
+    if (oneShot) {
+      onDone?.();
+    } else if (!intentionalKill && cameraModes.get(printerId) === "live") {
+      setTimeout(() => startCameraStream(printerId), 5000);
+    }
   });
 
   ffmpegProc.on("exit", () => {
     bambuProc.kill();
   });
 
-  cameraProcesses.set(printerId, { kill: () => { bambuProc.kill(); ffmpegProc.kill(); } });
+  cameraProcesses.set(printerId, {
+    kill: () => {
+      intentionalKill = true;
+      try { bambuProc.kill("SIGKILL"); } catch {}
+      try { ffmpegProc.kill("SIGKILL"); } catch {}
+    },
+  });
 }
 
 // ---- RTP camera stream (BambuStudio Go Live, X1-series) ----
 const rtpBackoff = new Map();
 
-function startRTPCameraStream(printerId) {
+function startRTPCameraStream(printerId, { oneShot = false, onDone } = {}) {
   const printer = PRINTERS.find((p) => p.id === printerId);
   if (!printer) return;
 
@@ -669,23 +700,31 @@ function startRTPCameraStream(printerId) {
     cameraProcesses.delete(printerId);
   }
 
-  const ffmpegProc = spawn(FFMPEG, [
+  const ffmpegArgs = [
+    ...hwaccelArgs(),
     "-protocol_whitelist", "file,udp,rtp",
     "-i", SDP_FILE,
     "-f", "mjpeg",
-    "-q:v", "1",
-    "-vf", "fps=30",
-    "pipe:1",
-  ], { env: process.env });
+    "-q:v", String(LIVE_QUALITY),
+    "-threads", "1",
+  ];
+  if (oneShot) {
+    ffmpegArgs.push("-frames:v", "1");
+  } else {
+    ffmpegArgs.push("-vf", `fps=${LIVE_FPS}`);
+  }
+  ffmpegArgs.push("pipe:1");
+  const ffmpegProc = spawn(FFMPEG, ffmpegArgs, { env: process.env });
 
   ffmpegProc.stderr.on("data", () => {});
 
   let buf = Buffer.alloc(0);
   let firstFrame = true;
+  let intentionalKill = false;
   ffmpegProc.stdout.on("data", (chunk) => {
     buf = parseJpegFrames(Buffer.concat([buf, chunk]), (frame) => {
       if (firstFrame) {
-        console.log(`Camera live: ${printer.name} (RTP)`);
+        console.log(`Camera ${oneShot ? "poll" : "live"}: ${printer.name} (RTP)`);
         rtpBackoff.delete(printerId);
         firstFrame = false;
       }
@@ -695,18 +734,27 @@ function startRTPCameraStream(printerId) {
 
   ffmpegProc.on("exit", () => {
     cameraProcesses.delete(printerId);
-    const delay = Math.min(rtpBackoff.get(printerId) || 5000, 60000);
-    rtpBackoff.set(printerId, delay * 2);
-    setTimeout(() => startRTPCameraStream(printerId), delay);
+    if (oneShot) {
+      onDone?.();
+    } else if (!intentionalKill && cameraModes.get(printerId) === "live") {
+      const delay = Math.min(rtpBackoff.get(printerId) || 5000, 60000);
+      rtpBackoff.set(printerId, delay * 2);
+      setTimeout(() => startRTPCameraStream(printerId), delay);
+    }
   });
 
-  cameraProcesses.set(printerId, { kill: () => ffmpegProc.kill() });
+  cameraProcesses.set(printerId, {
+    kill: () => {
+      intentionalKill = true;
+      try { ffmpegProc.kill("SIGKILL"); } catch {}
+    },
+  });
 }
 
 // ---- TLS camera stream (port 6000, older Bambu models) ----
 const tlsBackoff = new Map();
 
-function startTLSCameraStream(printerId) {
+function startTLSCameraStream(printerId, { oneShot = false, onDone } = {}) {
   const printer = PRINTERS.find((p) => p.id === printerId);
   if (!printer) return;
 
@@ -716,6 +764,7 @@ function startTLSCameraStream(printerId) {
     cameraProcesses.delete(printerId);
   }
 
+  let intentionalKill = false;
   const socket = tls.connect(6000, printer.ip, { rejectUnauthorized: false }, () => {
     const header = Buffer.from([0x00, 0x00, 0x00, 0x40, 0xb8, 0xce, 0x5f, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     const user = Buffer.alloc(32);
@@ -748,10 +797,15 @@ function startTLSCameraStream(printerId) {
       buf = Buffer.from(buf.subarray(16 + dataLen));
       framesFound++;
       if (framesFound === 1) {
-        console.log(`Camera live: ${printer.name} (TLS)`);
+        console.log(`Camera ${oneShot ? "poll" : "live"}: ${printer.name} (TLS)`);
         tlsBackoff.delete(printerId);
       }
       broadcastFrame(printerId, frame);
+      if (oneShot) {
+        intentionalKill = true;
+        socket.destroy();
+        return;
+      }
     }
   });
 
@@ -761,29 +815,77 @@ function startTLSCameraStream(printerId) {
 
   socket.on("close", () => {
     cameraProcesses.delete(printerId);
-    const delay = Math.min(tlsBackoff.get(printerId) || 5000, 300000);
-    tlsBackoff.set(printerId, delay * 2);
-    setTimeout(() => startTLSCameraStream(printerId), delay);
+    if (oneShot) {
+      onDone?.();
+    } else if (!intentionalKill && cameraModes.get(printerId) === "live") {
+      const delay = Math.min(tlsBackoff.get(printerId) || 5000, 300000);
+      tlsBackoff.set(printerId, delay * 2);
+      setTimeout(() => startTLSCameraStream(printerId), delay);
+    }
   });
 
-  cameraProcesses.set(printerId, { kill: () => socket.destroy() });
+  cameraProcesses.set(printerId, {
+    kill: () => { intentionalKill = true; socket.destroy(); },
+  });
+}
+
+function cameraStarter(printer) {
+  if (printer.cameraMode === "rtp") return startRTPCameraStream;
+  if (tutkUrls[printer.serial]) return startCameraStream;
+  return startTLSCameraStream;
+}
+
+function startLive(printerId) {
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return;
+  cameraStarter(printer)(printerId);
+}
+
+function runPoll(printerId) {
+  const printer = PRINTERS.find((p) => p.id === printerId);
+  if (!printer) return;
+  if (cameraModes.get(printerId) !== "poll") return;
+  cameraStarter(printer)(printerId, {
+    oneShot: true,
+    onDone: () => {
+      if (cameraModes.get(printerId) !== "poll") return;
+      const t = setTimeout(() => runPoll(printerId), POLL_INTERVAL_MS);
+      pollTimers.set(printerId, t);
+    },
+  });
+}
+
+function setCameraMode(printerId, mode) {
+  if (cameraModes.get(printerId) === mode) return;
+  cameraModes.set(printerId, mode);
+
+  // Cancel any pending poll timer and any running process from the previous mode.
+  const t = pollTimers.get(printerId);
+  if (t) { clearTimeout(t); pollTimers.delete(printerId); }
+  const existing = cameraProcesses.get(printerId);
+  if (existing) { existing.kill(); cameraProcesses.delete(printerId); }
+
+  if (mode === "live") startLive(printerId);
+  else runPoll(printerId);
 }
 
 function restartCameraStream(printerId) {
+  // TUTK URL refreshed — restart whichever mode we're in.
+  const mode = cameraModes.get(printerId);
   const existing = cameraProcesses.get(printerId);
-  if (existing) existing.kill();
-  setTimeout(() => startCameraStream(printerId), 500);
+  if (existing) { existing.kill(); cameraProcesses.delete(printerId); }
+  const t = pollTimers.get(printerId);
+  if (t) { clearTimeout(t); pollTimers.delete(printerId); }
+  setTimeout(() => {
+    if (mode === "live") startLive(printerId);
+    else runPoll(printerId);
+  }, 500);
 }
 
-// Start camera streams
+// Boot every printer in poll mode. Clients flip individual printers to "live"
+// via { type: "set_live", printer, live: true } when they open the camera view.
 for (const printer of PRINTERS) {
-  if (printer.cameraMode === "rtp") {
-    startRTPCameraStream(printer.id);
-  } else if (tutkUrls[printer.serial]) {
-    startCameraStream(printer.id);
-  } else {
-    startTLSCameraStream(printer.id);
-  }
+  setCameraMode(printer.id, "poll");
 }
 
 // ---- WebSocket connection handler ----
@@ -796,6 +898,13 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    if (msg.type === "set_live") {
+      const printer = PRINTERS.find((p) => p.id === msg.printer);
+      if (!printer) return;
+      setCameraMode(printer.id, msg.live ? "live" : "poll");
+      return;
+    }
 
     if (msg.type === "ftp_list") {
       const printer = PRINTERS.find((p) => p.id === msg.printer);

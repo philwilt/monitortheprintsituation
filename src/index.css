@@ -11,6 +11,6 @@
 
 body {
   margin: 0;
-  background: #08080c;
+  background: var(--bg-deep, #08080c);
   overflow-x: hidden;
 }

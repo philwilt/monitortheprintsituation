@@ -121,6 +121,11 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
     ws.onopen = () => {
       console.log("Connected to server");
       setConnected(true);
+      // Re-announce live printers after (re)connect so the server can match
+      // its mode state to ours.
+      for (const printer of frameIntervalRef.current) {
+        ws.send(JSON.stringify({ type: "set_live", printer, live: true }));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -251,6 +256,24 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
       ws.close();
     };
   }, []);
+
+  // Diff live set against previous and send set_live transitions to the server.
+  const prevLiveRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      prevLiveRef.current = new Set(livePrinters);
+      return;
+    }
+    const prev = prevLiveRef.current;
+    for (const p of livePrinters) {
+      if (!prev.has(p)) ws.send(JSON.stringify({ type: "set_live", printer: p, live: true }));
+    }
+    for (const p of prev) {
+      if (!livePrinters.has(p)) ws.send(JSON.stringify({ type: "set_live", printer: p, live: false }));
+    }
+    prevLiveRef.current = new Set(livePrinters);
+  }, [livePrinters, connected]);
 
   useEffect(() => {
     connect();

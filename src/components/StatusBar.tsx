@@ -1,8 +1,24 @@
+import { useEffect, useState } from "react";
 import type { PrinterInfo } from "../hooks/usePrinterData";
 
 interface Props {
   printers: Map<string, PrinterInfo>;
   connected: boolean;
+}
+
+type Theme = "dark" | "light";
+
+function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem("theme") as Theme | null;
+    if (stored === "light" || stored === "dark") return stored;
+    return "dark";
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme((t) => (t === "dark" ? "light" : "dark"))];
 }
 
 type SystemMood = "nominal" | "degraded" | "critical";
@@ -27,6 +43,7 @@ function getSystemMood(printers: Map<string, PrinterInfo>): SystemMood {
 
 export function StatusBar({ printers, connected }: Props) {
   const { mood, label } = getSystemStatus(printers);
+  const [theme, toggleTheme] = useTheme();
 
   const total = printers.size;
   let active = 0;
@@ -80,6 +97,15 @@ export function StatusBar({ printers, connected }: Props) {
         >
           {connected ? "live" : "reconnecting"}
         </div>
+        <button
+          className="theme-toggle"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          type="button"
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
       </div>
     </div>
   );
