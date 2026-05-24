@@ -89,7 +89,7 @@ const activeJobs = new Map();      // printerId → { jobId, gcodeState }
 // (continuous stream at LIVE_FPS). Default is poll — live is only enabled while
 // a client has the card expanded to camera view.
 const POLL_INTERVAL_MS = 30000;
-const LIVE_FPS = 24;
+const LIVE_FPS = 15;
 const LIVE_QUALITY = 3;       // ffmpeg -q:v for MJPEG (1=best/largest, 31=worst). 3 is plenty for a dashboard tile.
 const FFMPEG_HWACCEL = process.env.FFMPEG_HWACCEL || ""; // e.g. "cuda" or "vaapi" — adds -hwaccel before -i
 const cameraModes = new Map();   // printerId → "poll" | "live"
