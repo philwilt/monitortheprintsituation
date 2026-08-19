@@ -88,6 +88,7 @@ interface WSMessage {
   path?: string;
   files?: FtpFileInfo[];
   error?: string;
+  live?: boolean;
 }
 
 export function usePrinterData(livePrinters: Set<string> = new Set()) {
@@ -95,6 +96,9 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
   const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(new Map());
   const [ftpListings, setFtpListings] = useState<Map<string, FtpListing>>(new Map());
   const [connected, setConnected] = useState(false);
+  // The server's actual camera mode per printer — it can diverge from our own
+  // `livePrinters` request when the server force-reverts (e.g. LIVE_TIMEOUT_MS).
+  const [serverLive, setServerLive] = useState<Map<string, boolean>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const frameIntervalRef = useRef(livePrinters);
@@ -201,6 +205,15 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
         });
       }
 
+      if (msg.type === "camera_mode" && typeof msg.live === "boolean") {
+        setServerLive((prev) => {
+          if (prev.get(msg.printer) === msg.live) return prev;
+          const next = new Map(prev);
+          next.set(msg.printer, msg.live!);
+          return next;
+        });
+      }
+
       if (msg.type === "camera_frame" && msg.frame) {
         // Skip frame if in snapshot mode and not enough time has passed
         const isLive = frameIntervalRef.current.has(msg.printer);
@@ -293,5 +306,5 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
     }
   }, []);
 
-  return { printers, cameraFrames, connected, ftpListings, sendMessage };
+  return { printers, cameraFrames, connected, ftpListings, sendMessage, serverLive };
 }

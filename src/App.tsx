@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { usePrinterData } from "./hooks/usePrinterData";
 import { useAlerts } from "./hooks/useAlerts";
 import { useGallery, matchGalleryItem } from "./hooks/useGallery";
@@ -29,8 +29,23 @@ type Tab = "status" | "gallery" | "log" | "stats" | "files" | "inventory";
 function App() {
   const [tab, setTab] = useState<Tab>("status");
   const [liveCameras, setLiveCameras] = useState<Set<string>>(new Set());
-  const { printers, cameraFrames, connected, ftpListings, sendMessage } = usePrinterData(liveCameras);
+  const { printers, cameraFrames, connected, ftpListings, sendMessage, serverLive } = usePrinterData(liveCameras);
   useAlerts(printers);
+
+  // The server can force a printer out of live mode on its own (LIVE_TIMEOUT_MS
+  // safety net) — when that happens, drop it from our local live set too so the
+  // toggle UI doesn't keep claiming "live" for a stream that's actually stopped.
+  useEffect(() => {
+    for (const [printer, live] of serverLive) {
+      if (!live && liveCameras.has(printer)) {
+        setLiveCameras((prev) => {
+          const next = new Set(prev);
+          next.delete(printer);
+          return next;
+        });
+      }
+    }
+  }, [serverLive, liveCameras]);
   const { items: galleryItems } = useGallery();
   const mood = getSystemMood(printers);
 

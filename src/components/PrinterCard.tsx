@@ -334,6 +334,27 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
   const pct = d?.mc_percent || 0;
   const isRunning = d?.gcode_state === "RUNNING";
 
+  const [expanded, setExpanded] = useState(false);
+
+  const openFullscreen = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      // Make sure the stream is actually running while enlarged.
+      if (!isLive) onToggleLive?.();
+      setExpanded(true);
+    },
+    [isLive, onToggleLive]
+  );
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
   return (
     <div className={cardClass}>
       {/* Camera — top of card */}
@@ -350,6 +371,16 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
         )}
         {isRunning && (
           <div className="card-camera-pct">{pct}<span className="card-camera-pct-unit">%</span></div>
+        )}
+        {cameraFrame && (
+          <button
+            className="card-camera-expand"
+            onClick={openFullscreen}
+            aria-label="Expand to full screen"
+            title="Expand to full screen"
+          >
+            ⛶
+          </button>
         )}
         <div className="card-camera-footer">
           <span className="card-camera-name">{printer.name}</span>
@@ -625,6 +656,31 @@ export const PrinterCard = memo(function PrinterCard({ printer, cameraFrame, isL
         )}
 
       </div>
+
+      {/* Fullscreen camera overlay */}
+      {expanded && (
+        <div
+          className="camera-fullscreen"
+          onClick={() => setExpanded(false)}
+          role="dialog"
+          aria-label={`${printer.name} camera, full screen`}
+        >
+          {cameraFrame ? (
+            <img src={cameraFrame} alt={`${printer.name} feed`} onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <div className="camera-fullscreen-placeholder">Waiting for stream…</div>
+          )}
+          <div className="camera-fullscreen-title">{printer.name}</div>
+          <button
+            className="camera-fullscreen-close"
+            onClick={() => setExpanded(false)}
+            aria-label="Close full screen"
+            title="Close (Esc)"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 });

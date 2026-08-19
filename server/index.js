@@ -92,8 +92,10 @@ const POLL_INTERVAL_MS = 30000;
 const LIVE_FPS = 15;
 const LIVE_QUALITY = 3;       // ffmpeg -q:v for MJPEG (1=best/largest, 31=worst). 3 is plenty for a dashboard tile.
 const FFMPEG_HWACCEL = process.env.FFMPEG_HWACCEL || ""; // e.g. "cuda" or "vaapi" — adds -hwaccel before -i
+const LIVE_TIMEOUT_MS = 30000; // safety net: a client that dies/reconnects-forever without explicitly stopping shouldn't stream forever
 const cameraModes = new Map();   // printerId → "poll" | "live"
 const pollTimers = new Map();    // printerId → setTimeout handle for next poll
+const liveTimeouts = new Map();  // printerId → setTimeout handle that force-reverts live → poll
 function hwaccelArgs() {
   return FFMPEG_HWACCEL ? ["-hwaccel", FFMPEG_HWACCEL] : [];
 }
@@ -858,6 +860,9 @@ function runPoll(printerId) {
 function setCameraMode(printerId, mode) {
   if (cameraModes.get(printerId) === mode) return;
   cameraModes.set(printerId, mode);
+  // Keep every client's live-toggle UI in sync, including a server-initiated
+  // revert (e.g. the LIVE_TIMEOUT_MS cap) that no client asked for.
+  broadcast({ type: "camera_mode", printer: printerId, live: mode === "live" });
 
   // Cancel any pending poll timer and any running process from the previous mode.
   const t = pollTimers.get(printerId);
@@ -865,8 +870,18 @@ function setCameraMode(printerId, mode) {
   const existing = cameraProcesses.get(printerId);
   if (existing) { existing.kill(); cameraProcesses.delete(printerId); }
 
-  if (mode === "live") startLive(printerId);
-  else runPoll(printerId);
+  // A client that dies, or reconnects and re-announces "live" without ever
+  // explicitly stopping, must not be able to stream forever — cap every live
+  // session at LIVE_TIMEOUT_MS and fall back to poll.
+  const lt = liveTimeouts.get(printerId);
+  if (lt) { clearTimeout(lt); liveTimeouts.delete(printerId); }
+
+  if (mode === "live") {
+    startLive(printerId);
+    liveTimeouts.set(printerId, setTimeout(() => setCameraMode(printerId, "poll"), LIVE_TIMEOUT_MS));
+  } else {
+    runPoll(printerId);
+  }
 }
 
 function restartCameraStream(printerId) {

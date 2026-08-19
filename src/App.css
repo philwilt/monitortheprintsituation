@@ -1371,6 +1371,103 @@ body {
   letter-spacing: 0.04em;
 }
 
+.card-camera-expand {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.card-camera:hover .card-camera-expand { opacity: 1; }
+
+.card-camera-expand:hover {
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+}
+
+/* ---- Fullscreen camera overlay ---- */
+.camera-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.92);
+  cursor: zoom-out;
+  animation: camera-fullscreen-in 0.15s ease;
+}
+
+@keyframes camera-fullscreen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.camera-fullscreen img {
+  max-width: 96vw;
+  max-height: 92vh;
+  object-fit: contain;
+  cursor: default;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+
+.camera-fullscreen-placeholder {
+  font-family: var(--font-mono);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+}
+
+.camera-fullscreen-title {
+  position: absolute;
+  top: 20px;
+  left: 24px;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.03em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.camera-fullscreen-close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.camera-fullscreen-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
 /* ---- Offline Card ---- */
 .card-offline {
   padding: 24px 20px;
