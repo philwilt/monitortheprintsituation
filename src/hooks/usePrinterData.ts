@@ -91,14 +91,16 @@ interface WSMessage {
   live?: boolean;
 }
 
-export function usePrinterData(livePrinters: Set<string> = new Set()) {
+export function usePrinterData(livePrinters: Set<string> = new Set(), onServerLiveOff?: (printer: string) => void) {
   const [printers, setPrinters] = useState<Map<string, PrinterInfo>>(new Map());
   const [cameraFrames, setCameraFrames] = useState<Map<string, string>>(new Map());
   const [ftpListings, setFtpListings] = useState<Map<string, FtpListing>>(new Map());
   const [connected, setConnected] = useState(false);
-  // The server's actual camera mode per printer — it can diverge from our own
-  // `livePrinters` request when the server force-reverts (e.g. LIVE_TIMEOUT_MS).
-  const [serverLive, setServerLive] = useState<Map<string, boolean>>(new Map());
+  // Called once per server-initiated "you're no longer live" event (e.g. the
+  // LIVE_TIMEOUT_MS safety net) — an imperative one-shot, not a reactive
+  // comparison, so it can't race with a fresh click re-requesting live.
+  const onServerLiveOffRef = useRef(onServerLiveOff);
+  onServerLiveOffRef.current = onServerLiveOff;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const frameIntervalRef = useRef(livePrinters);
@@ -205,13 +207,8 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
         });
       }
 
-      if (msg.type === "camera_mode" && typeof msg.live === "boolean") {
-        setServerLive((prev) => {
-          if (prev.get(msg.printer) === msg.live) return prev;
-          const next = new Map(prev);
-          next.set(msg.printer, msg.live!);
-          return next;
-        });
+      if (msg.type === "camera_mode" && msg.live === false) {
+        onServerLiveOffRef.current?.(msg.printer);
       }
 
       if (msg.type === "camera_frame" && msg.frame) {
@@ -306,5 +303,5 @@ export function usePrinterData(livePrinters: Set<string> = new Set()) {
     }
   }, []);
 
-  return { printers, cameraFrames, connected, ftpListings, sendMessage, serverLive };
+  return { printers, cameraFrames, connected, ftpListings, sendMessage };
 }
