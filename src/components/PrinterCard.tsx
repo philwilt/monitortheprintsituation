@@ -38,7 +38,7 @@ function formatTime(minutes?: number): string {
   return `${m}m`;
 }
 
-type CardState =
+export type CardState =
   | "printing"
   | "idle"
   | "paused"
@@ -47,7 +47,7 @@ type CardState =
   | "preparing"
   | "offline";
 
-function getCardState(printer: PrinterInfo): CardState {
+export function getCardState(printer: PrinterInfo): CardState {
   if (printer.status !== "connected") return "offline";
   const s = printer.data?.gcode_state;
   switch (s) {
@@ -274,17 +274,6 @@ function getActiveFilament(
 function detectAnomaly(printer: PrinterInfo): string | null {
   const d = printer.data;
   if (!d) return null;
-
-  if (
-    d.nozzle_temper != null &&
-    d.nozzle_target_temper != null &&
-    d.nozzle_target_temper > 0
-  ) {
-    const diff = Math.abs(d.nozzle_temper - d.nozzle_target_temper);
-    if (diff > 15 && d.gcode_state === "RUNNING") {
-      return "Nozzle temp deviation";
-    }
-  }
 
   if (
     d.bed_temper != null &&

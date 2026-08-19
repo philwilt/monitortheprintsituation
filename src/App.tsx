@@ -4,6 +4,7 @@ import { useAlerts } from "./hooks/useAlerts";
 import { useGallery, matchGalleryItem } from "./hooks/useGallery";
 import { StatusBar, getSystemMood } from "./components/StatusBar";
 import { SortablePrinterCard } from "./components/SortablePrinterCard";
+import { getCardState } from "./components/PrinterCard";
 import {
   DndContext,
   closestCenter,
@@ -28,6 +29,7 @@ type Tab = "status" | "gallery" | "log" | "stats" | "files" | "inventory";
 
 function App() {
   const [tab, setTab] = useState<Tab>("status");
+  const [liveOnly, setLiveOnly] = useState(false);
   const [liveCameras, setLiveCameras] = useState<Set<string>>(new Set());
   // The server can force a printer out of live mode on its own (LIVE_TIMEOUT_MS
   // safety net) — this fires once per such event, not on every liveCameras
@@ -57,6 +59,14 @@ function App() {
     for (const p of all) if (!inOrder.has(p.id)) ordered.push(p);
     return ordered;
   }, [printers, cardOrder]);
+
+  const visiblePrinters = useMemo(() => {
+    if (!liveOnly) return orderedPrinters;
+    return orderedPrinters.filter((p) => {
+      const state = getCardState(p);
+      return state === "printing" || state === "paused" || state === "error" || state === "preparing";
+    });
+  }, [orderedPrinters, liveOnly]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -137,27 +147,45 @@ function App() {
                 </div>
               </div>
             ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={orderedPrinters.map((p) => p.id)} strategy={rectSortingStrategy}>
-                  <div className="printer-grid">
-                    {orderedPrinters.map((printer) => (
-                      <SortablePrinterCard
-                        key={printer.id}
-                        printer={printer}
-                        cameraFrame={cameraFrames.get(printer.id)}
-                        isLive={liveCameras.has(printer.id)}
-                        onToggleLive={() => setLiveCameras((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(printer.id)) next.delete(printer.id);
-                          else next.add(printer.id);
-                          return next;
-                        })}
-                        galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
-                      />
-                    ))}
+              <>
+                <div className="status-filter-bar">
+                  <button
+                    className={`filter-toggle-btn${liveOnly ? " active" : ""}`}
+                    onClick={() => setLiveOnly((v) => !v)}
+                    type="button"
+                  >
+                    {liveOnly ? "Showing live only" : "Show all printers"}
+                  </button>
+                </div>
+                {visiblePrinters.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-state-title">Nothing printing right now</div>
+                    <div className="empty-state-subtitle">Every printer is idle</div>
                   </div>
-                </SortableContext>
-              </DndContext>
+                ) : (
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={visiblePrinters.map((p) => p.id)} strategy={rectSortingStrategy}>
+                      <div className="printer-grid">
+                        {visiblePrinters.map((printer) => (
+                          <SortablePrinterCard
+                            key={printer.id}
+                            printer={printer}
+                            cameraFrame={cameraFrames.get(printer.id)}
+                            isLive={liveCameras.has(printer.id)}
+                            onToggleLive={() => setLiveCameras((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(printer.id)) next.delete(printer.id);
+                              else next.add(printer.id);
+                              return next;
+                            })}
+                            galleryItem={matchGalleryItem(galleryItems, printer.data?.subtask_name)}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+              </>
             )
           )}
 
